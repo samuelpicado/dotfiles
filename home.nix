@@ -18,6 +18,7 @@
     eza
     fd
     libnotify
+    python3
     ripgrep
     tealdeer
     tree
