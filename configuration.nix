@@ -77,6 +77,22 @@
     wireplumber.enable = true;
   };
 
+  # --- Swap ---
+  zramSwap = {
+    enable = true;
+    algorithm = "zstd"; # zstd = compresión rápida y eficiente, lz4 = compresión rápida pero menos eficiente
+    memoryPercent = 50;
+  };
+
+  # --- OOMD ---
+  systemd.oomd = {
+    enable = true;
+    enableRootSlice = true;
+    enableSystemSlice = true;
+    enableUserSlices = false; # Disables killing user sessions
+  };
+
+
   # --- Virtualisation ---
   virtualisation.docker.enable = true;
 
