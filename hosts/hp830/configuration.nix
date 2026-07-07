@@ -7,4 +7,9 @@
   ];
 
   networking.hostName = "hp830";
+
+  boot = {
+    resumeDevice = lib.mkForce null;
+    kernelParams = [ "noresume" ];
+  };
 }

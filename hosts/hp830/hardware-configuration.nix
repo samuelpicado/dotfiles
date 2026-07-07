@@ -4,7 +4,10 @@
 #
 # PLACEHOLDER: Replace this file with the output of:
 #   nixos-generate-config --root /mnt
-# after booting the NixOS installer on the HP EliteBook 830.
+# after booting the NixOS installer on the HP EliteBook 830 G7.
+#
+# IMPORTANT: After generation, remove any swapDevices and resumeDevice
+# entries if hibernation/swap is not wanted.
 { config, lib, pkgs, modulesPath, ... }:
 
 {
@@ -28,9 +31,7 @@
       options = [ "fmask=0022" "dmask=0022" ];
     };
 
-  swapDevices =
-    [ { device = "/dev/disk/by-label/SWAP"; }
-    ];
+  swapDevices = [ ];
 
   nixpkgs.hostPlatform = lib.mkDefault "x86_64-linux";
 }
