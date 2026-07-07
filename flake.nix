@@ -9,17 +9,37 @@
     };
   };
 
-  outputs = { self, nixpkgs, home-manager, ... }: {
-    nixosConfigurations.nixos = nixpkgs.lib.nixosSystem {
+  outputs = { self, nixpkgs, home-manager, ... }:
+    let
       system = "x86_64-linux";
-      modules = [
-        ./configuration.nix
-        home-manager.nixosModules.home-manager {
-          home-manager.useGlobalPkgs = true;
-          home-manager.useUserPackages = true;
-          home-manager.users.pikdo = import ./home.nix;
-        }
-      ];
+
+      homeManagerModule = { ... }: {
+        imports = [
+          home-manager.nixosModules.home-manager
+        ];
+        home-manager = {
+          useGlobalPkgs = true;
+          useUserPackages = true;
+          users.pikdo = import ./home.nix;
+        };
+      };
+    in
+    {
+      nixosConfigurations = {
+        x13 = nixpkgs.lib.nixosSystem {
+          inherit system;
+          modules = [
+            ./hosts/x13/configuration.nix
+            homeManagerModule
+          ];
+        };
+        hp830 = nixpkgs.lib.nixosSystem {
+          inherit system;
+          modules = [
+            ./hosts/hp830/configuration.nix
+            homeManagerModule
+          ];
+        };
+      };
     };
-  };
 }
