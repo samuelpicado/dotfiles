@@ -1,4 +1,4 @@
-{ config, lib, pkgs, ... }:
+{ config, lib, pkgs, osConfig, ... }:
 
 {
   home = {
@@ -75,6 +75,7 @@
         gp = "git push";
         up = "nix flake update";
         rebuild = "sudo nixos-rebuild switch --flake /home/pikdo/Documents/GitHub/Dotfiles";
+        hprebuild = "sudo nixos-rebuild switch --flake /home/pikdo/Dotfiles";
       };
       plugins = [
         {
