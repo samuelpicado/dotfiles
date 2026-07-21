@@ -161,5 +161,39 @@
         userSettings = {};
       };
     };
+
+    zed-editor = {
+      enable = true;
+      enableMcpIntegration = true;
+
+      userSettings = {
+        auto_save = "on_focus_change";
+        project_panel = {
+          flatten_directories = false;
+        };
+        theme = {
+          mode = "Dark Violet (Transparent)";
+        };
+      };
+      extensions = [
+        "java"
+        "dockerfile"
+        "sql"
+        "nix"
+        "prisma"
+        "docker-compose"
+        "ini"
+        "pylsp"
+        "xml"
+        "zedokai"
+        "codebook"
+        "colored-zed-icons-theme"
+        "neon-comfy-soft-themes"
+      ];
+      extraPackages = with pkgs; [
+        nixd
+        nil
+      ];
+    };
   };
 }
