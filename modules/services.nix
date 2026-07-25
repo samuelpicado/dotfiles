@@ -11,7 +11,10 @@
   };
 
   hardware.steam-hardware.enable = true;
-  programs.steam.enable = true;
+  programs.steam = {
+    enable = true;
+    extraCompatPackages = with pkgs; [ proton-ge-bin ];
+  };
 
   services.zerotierone.enable = true;
   services.zerotierone.joinNetworks = [ "88c5b1f339c29ad7" ];

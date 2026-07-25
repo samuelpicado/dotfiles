@@ -9,5 +9,6 @@
     ./services.nix
     ./fonts.nix
     ./nix.nix
+    ./tahoe-theme.nix
   ];
 }
