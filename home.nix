@@ -22,6 +22,7 @@
     ripgrep
     tealdeer
     tree
+    firefox
   ];
 
   # --- Programs ---
@@ -76,6 +77,8 @@
         up = "nix flake update";
         rebuild = "sudo nixos-rebuild switch --flake /home/pikdo/Documents/GitHub/Dotfiles";
         hprebuild = "sudo nixos-rebuild switch --flake /home/pikdo/Dotfiles";
+        zon = "sudo systemctl start zerotierone";
+        zoff = "sudo systemctl stop zerotierone";
       };
       plugins = [
         {
@@ -195,5 +198,7 @@
         nil
       ];
     };
+
+
   };
 }
