@@ -2,7 +2,7 @@
 
 {
   boot = {
-    kernelPackages = pkgs.linuxPackages_zen;
+    kernelPackages = pkgs.cachyosKernels.linuxPackages-cachyos-bore-lto;
     loader = {
       systemd-boot = {
         enable = true;
@@ -10,6 +10,12 @@
       };
       efi.canTouchEfiVariables = true;
     };
+  };
+
+  fileSystems."/tmp" = {
+    device = "tmpfs";
+    fsType = "tmpfs";
+    options = [ "size=8G" ];
   };
 
   zramSwap = {

@@ -7,9 +7,10 @@
       url = "github:nix-community/home-manager";
       inputs.nixpkgs.follows = "nixpkgs";
     };
+    nix-cachyos-kernel.url = "github:xddxdd/nix-cachyos-kernel/release";
   };
 
-  outputs = { self, nixpkgs, home-manager, ... }:
+  outputs = { self, nixpkgs, home-manager, nix-cachyos-kernel, ... }@inputs:
     let
       system = "x86_64-linux";
 
@@ -28,6 +29,7 @@
       nixosConfigurations = {
         x13 = nixpkgs.lib.nixosSystem {
           inherit system;
+          specialArgs = { inherit inputs; };
           modules = [
             ./hosts/x13/configuration.nix
             homeManagerModule
@@ -35,6 +37,7 @@
         };
         hp830 = nixpkgs.lib.nixosSystem {
           inherit system;
+          specialArgs = { inherit inputs; };
           modules = [
             ./hosts/hp830/configuration.nix
             homeManagerModule
