@@ -77,6 +77,7 @@
         up = "nix flake update";
         rebuild = "sudo nixos-rebuild switch --flake /home/pikdo/Documents/GitHub/Dotfiles";
         hprebuild = "sudo nixos-rebuild switch --flake /home/pikdo/Dotfiles";
+        freeram = "rm -fv /tmp/.79*.so && echo 'Temp .so files cleaned'";
         zon = "sudo systemctl start zerotierone";
         zoff = "sudo systemctl stop zerotierone";
       };

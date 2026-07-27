@@ -4,7 +4,5 @@
   environment.systemPackages = with pkgs; [
     vim
     wget
-    gnome-tweaks
-    gnome-extension-manager
   ];
 }

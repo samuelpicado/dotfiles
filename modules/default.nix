@@ -4,7 +4,7 @@
     ./networking.nix
     ./users.nix
     ./system-packages.nix
-    ./gnome.nix
+    ./cosmic.nix
     ./audio.nix
     ./services.nix
     ./fonts.nix

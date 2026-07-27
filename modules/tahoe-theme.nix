@@ -14,7 +14,7 @@ let
     src = tahoeSrc;
     nativeBuildInputs = [ pkgs.sassc ];
     installPhase = ''
-      mkdir -p $out/share/themes $out/share/backgrounds/Tahoe $out/share/gnome-background-properties
+      mkdir -p $out/share/themes $out/share/backgrounds/Tahoe
       for variant in Tahoe-Dark Tahoe-Light; do
         cp -r gtk/$variant $out/share/themes/
         mkdir -p $out/share/themes/$variant/gtk-4.0
@@ -22,27 +22,8 @@ let
       done
       cp .config/walls/Tahoe/Tahoe-5k-dark.jpg $out/share/backgrounds/Tahoe/
       cp .config/walls/Tahoe/Tahoe-5k-light.jpg $out/share/backgrounds/Tahoe/
-      cat > $out/share/gnome-background-properties/tahoe.xml << 'XMLEOF'
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE wallpapers SYSTEM "gnome-wp-list.dtd">
-<wallpapers>
-  <wallpaper deleted="false">
-    <name>Tahoe Dark</name>
-    <filename>/run/current-system/sw/share/backgrounds/Tahoe/Tahoe-5k-dark.jpg</filename>
-    <options>zoom</options>
-    <shade_type>dark</shade_type>
-  </wallpaper>
-  <wallpaper deleted="false">
-    <name>Tahoe Light</name>
-    <filename>/run/current-system/sw/share/backgrounds/Tahoe/Tahoe-5k-light.jpg</filename>
-    <options>zoom</options>
-    <shade_type>light</shade_type>
-  </wallpaper>
-</wallpapers>
-XMLEOF
     '';
   };
-
 
 in
 {
