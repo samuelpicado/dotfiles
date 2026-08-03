@@ -4,11 +4,10 @@
     ./networking.nix
     ./users.nix
     ./system-packages.nix
-    ./gnome.nix
+    ./hyprland.nix
     ./audio.nix
     ./services.nix
     ./fonts.nix
     ./nix.nix
-    ./tahoe-theme.nix
   ];
 }

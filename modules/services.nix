@@ -3,6 +3,8 @@
 {
   services.flatpak.enable = true;
 
+  hardware.bluetooth.enable = true;
+
   systemd.oomd = {
     enable = true;
     enableRootSlice = true;

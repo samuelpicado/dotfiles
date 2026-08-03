@@ -4,7 +4,12 @@
   environment.systemPackages = with pkgs; [
     vim
     wget
-    gnome-tweaks
-    gnome-extension-manager
+    flatpak
+    gnome-software
+    gnumake
+    cmake
+    cpio
+    pkgconf
+    hyprwayland-scanner
   ];
 }
