@@ -6,7 +6,7 @@
     loader = {
       systemd-boot = {
         enable = true;
-        /*configurationLimit = 10;*/
+        configurationLimit = 10;
       };
       efi.canTouchEfiVariables = true;
     };
@@ -15,7 +15,7 @@
   fileSystems."/tmp" = {
     device = "tmpfs";
     fsType = "tmpfs";
-    options = [ "size=8G" ];
+    options = [ "size=2G" ];
   };
 
   zramSwap = {

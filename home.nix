@@ -25,6 +25,10 @@
     tealdeer
     tree
     firefox
+    nodejs
+    # Free Pascal
+    fpc
+    lazarus
   ];
 
   # --- Programs ---
@@ -49,8 +53,8 @@
       autosuggestion.enable = true;
       syntaxHighlighting.enable = true;
       history = {
-        size = 100000;
-        save = 100000;
+        size = 25000;
+        save = 25000;
         ignoreDups = true;
         ignoreSpace = true;
         share = true;

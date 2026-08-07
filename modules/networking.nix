@@ -3,6 +3,7 @@
 {
   time.timeZone = "America/Costa_Rica";
   networking.networkmanager.enable = true;
+  systemd.network.wait-online.enable = false;
   networking.extraHosts = ''
     127.0.0.1 presence.gog.com
     127.0.0.1 galaxy.gog.com

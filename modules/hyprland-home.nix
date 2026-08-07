@@ -2,9 +2,9 @@
 
 let
   wallpaper = pkgs.fetchurl {
-    url = "https://images.unsplash.com/photo-1506905925346-21bda4d32df4?w=3840&q=80";
+    url = "https://images.unsplash.com/photo-1505144808419-1957a94ca61e?w=3840";
     name = "wallpaper.jpg";
-    hash = "sha256-uZnyIay+dcgHM+YcoGp8kZIgOmP2LKg6+Ya38fjNDRE=";
+    hash = "sha256-lEyCISeq06boUAuYYOdBOdCdypNYXntk+Z8F3BPvfqo=";
   };
 in
 
@@ -169,21 +169,63 @@ in
     }];
   };
 
-  programs.kitty = {
+  programs.foot = {
     enable = true;
     settings = {
-      font_family = "JetBrainsMono Nerd Font";
-      font_size = 12;
-      confirm_os_window_close = 0;
-      hide_window_decorations = "yes";
-      background_opacity = "0.82";
-      background_blur = 8;
-      shell = ".";
-      enable_audio_bell = false;
-      visual_bell_duration = 0.5;
-      window_padding_width = 8;
+      main = {
+        font = "JetBrainsMono Nerd Font:size=12";
+        pad = "8x8";
+        initial-color-theme = "dark";
+        shell = "${pkgs.zsh}/bin/zsh";
+      };
+      # Catppuccin Mocha (igual que el themeFile de kitty).
+      # foot >= 1.26 usa colors-dark / colors-light en vez de [colors].
+      colors-dark = {
+        alpha = 0.82;
+        background = "1e1e2e";
+        foreground = "cdd6f4";
+        selection-foreground = "1e1e2e";
+        selection-background = "585b70";
+        # dos valores: texto  cursor (fondo)
+        cursor = "1e1e2e f5e0dc";
+        regular0 = "45475a";
+        regular1 = "f38ba8";
+        regular2 = "a6e3a1";
+        regular3 = "f9e2af";
+        regular4 = "89b4fa";
+        regular5 = "f5c2e7";
+        regular6 = "94e2d5";
+        regular7 = "bac2de";
+        bright0 = "585b70";
+        bright1 = "f38ba8";
+        bright2 = "a6e3a1";
+        bright3 = "f9e2af";
+        bright4 = "89b4fa";
+        bright5 = "f5c2e7";
+        bright6 = "94e2d5";
+        bright7 = "a6adc8";
+      };
+      bell = {
+        urgent = "no";
+      };
+      cursor = {
+        style = "block";
+        blink = "no";
+      };
+      # Sin decoraciones de ventana (equivalente a hide_window_decorations).
+      # border-width vive en la seccion [csd] en foot >= 1.26.
+      csd = {
+        border-width = 0;
+      };
+      # Keybindings estilo kitty (foot no tiene pestanas: Control+Shift+t/n abren
+      # una nueva instancia/ventana, como hacia kitty con new-window).
+      # Formato foot >= 1.26: accion=combo1 combo2 ... (combo accion invertido).
+      key-bindings = {
+        "clipboard-copy" = "Control+Shift+c";
+        "clipboard-paste" = "Control+Shift+v";
+        "spawn-terminal" = "Control+Shift+n Control+Shift+t";
+      };
     };
-    themeFile = "Catppuccin-Mocha";
   };
 
   gtk = {
@@ -214,13 +256,11 @@ in
   };
 
   home.packages = with pkgs; [
-    kitty
+    foot
     fuzzel
-    wofi
     swaybg
     papirus-icon-theme
 
-    nautilus
     thunar
     thunar-archive-plugin
     thunar-volman
@@ -231,6 +271,7 @@ in
     nwg-drawer
     nwg-bar
     blueman
+    proton-vpn
   ];
 
   services.hypridle = {
@@ -277,7 +318,7 @@ in
     [main]
     font=JetBrainsMono Nerd Font:size=12
     prompt=>
-    terminal=kitty
+    terminal=foot
     namespace=fuzzel
     match-mode=fuzzy
     filter-desktop=no
@@ -293,11 +334,6 @@ in
     text=ffffffff
     placeholder=808080ff
     input=ffffffff
-    selection-match=ffffffff
-    selection-text=1e1e2eff
-    selection=ffffffff
-    counter=ffffffff
-    border=00000000
 
     [border]
     width=0
@@ -317,6 +353,20 @@ in
       music = "$HOME/Music";
       templates = "$HOME/Templates";
       publicShare = "$HOME/Public";
+    };
+    desktopEntries = {
+      foot-server-hidden = {
+        name = "Foot Server";
+        noDisplay = true;
+      };
+      footclient-hidden = {
+        name = "Foot Client";
+        noDisplay = true;
+      };
+      thunar-bulk-rename-hidden = {
+        name = "Bulk Rename";
+        noDisplay = true;
+      };
     };
   };
 }

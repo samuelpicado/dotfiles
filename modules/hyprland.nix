@@ -3,6 +3,9 @@
 let
   hyprglass = pkgs.callPackage ../pkgs/hyprglass.nix { mkHyprlandPlugin = pkgs.hyprlandPlugins.mkHyprlandPlugin; };
   polkitAgent = "${pkgs.kdePackages.polkit-kde-agent-1}/libexec/polkit-kde-authentication-agent-1";
+  ags-full = pkgs.ags.overrideAttrs (old: {
+    buildInputs = (old.buildInputs or []) ++ [ pkgs.astal.network pkgs.astal.bluetooth pkgs.networkmanager ];
+  });
   window-switcher = pkgs.writeShellScript "window-switcher" ''
     ${pkgs.hyprland}/bin/hyprctl clients -j \
       | ${pkgs.jq}/bin/jq -r '.[] | select(.title != "" and .mapped == true) | [.title, .address] | @tsv' \
@@ -32,8 +35,18 @@ let
                 natural_scroll = true,
                 tap_to_click   = true,
                 drag_lock      = true,
+                disable_while_typing = false,
             },
             sensitivity = 0,
+        },
+        gestures = {
+            workspace_swipe_distance = 300,
+            workspace_swipe_touch = true,
+            workspace_swipe_touch_invert = false,
+            workspace_swipe_min_speed_to_force = 30,
+            workspace_swipe_cancel_ratio = 0.5,
+            workspace_swipe_direction_lock = true,
+            workspace_swipe_direction_lock_threshold = 10,
         },
         general = {
             layout = "dwindle",
@@ -44,17 +57,17 @@ let
             ["col.inactive_border"] = "rgba(45475acc)",
         },
         decoration = {
-            rounding = 8,
+            rounding = 4,
             blur = {
                 enabled = true,
                 size  = 4,
-                passes = 2,
+                passes = 1,
                 new_optimizations = true,
             },
             shadow = {
                 enabled     = true,
-                range       = 12,
-                render_power = 3,
+                range       = 8,
+                render_power = 2,
             },
         },
         misc = {
@@ -73,16 +86,18 @@ let
 
     -- Gestures (GNOME-like: 3-finger horizontal swipe for workspaces)
     hl.gesture({ fingers = 3, direction = "horizontal", action = "workspace" })
+    -- Vertical workspace gesture reserved for the future vertical workspace flow.
+    hl.gesture({ fingers = 3, direction = "up",        action = "workspace" })
     hl.gesture({ fingers = 4, direction = "up",          action = function() hl.exec_cmd("${window-switcher}") end })
-    hl.gesture({ fingers = 4, direction = "down",        action = function() hl.exec_cmd("kitty") end })
+    hl.gesture({ fingers = 4, direction = "down",        action = function() hl.exec_cmd("foot") end })
 
     hl.curve("easeOutQuint",     { type = "bezier", points = { {0.23, 1}, {0.32, 1} } })
     hl.curve("easeInOutCubic",   { type = "bezier", points = { {0.65, 0}, {0.35, 1} } })
-    hl.animation({ leaf = "windows",     enabled = true, speed = 5, bezier = "easeOutQuint",   style = "popin" })
-    hl.animation({ leaf = "windowsOut",  enabled = true, speed = 5, bezier = "easeOutQuint",   style = "popin" })
-    hl.animation({ leaf = "fade",        enabled = true, speed = 5, bezier = "easeOutQuint" })
-    hl.animation({ leaf = "workspaces",  enabled = true, speed = 5, bezier = "easeOutQuint",   style = "slide" })
-    hl.animation({ leaf = "border",      enabled = true, speed = 5, bezier = "easeInOutCubic" })
+    hl.animation({ leaf = "windows",     enabled = true, speed = 3, bezier = "easeOutQuint",   style = "popin" })
+    hl.animation({ leaf = "windowsOut",  enabled = true, speed = 3, bezier = "easeOutQuint",   style = "popin" })
+    hl.animation({ leaf = "fade",        enabled = true, speed = 3, bezier = "easeOutQuint" })
+    hl.animation({ leaf = "workspaces",  enabled = true, speed = 4, bezier = "easeInOutCubic", style = "slide" })
+    hl.animation({ leaf = "border",      enabled = false })
 
     hl.env("XDG_CURRENT_DESKTOP", "Hyprland")
     hl.env("XDG_SESSION_TYPE",    "wayland")
@@ -99,11 +114,11 @@ let
             default_theme = "dark",
             default_preset = "glass",
             glass_opacity = 0.85,
-            blur_strength = 2.0,
+            blur_strength = 1.5,
             tint_color = 0x00000000,
             brightness = 0.85,
-            refraction_strength = 0.7,
-            fresnel_strength = 0.7,
+            refraction_strength = 0.3,
+            fresnel_strength = 0.3,
             dark = { brightness = 0.78, contrast = 0.92 },
             light = { adaptive_boost = 0.4 },
             layers = { enabled = 1 },
@@ -120,24 +135,23 @@ let
         hl.exec_cmd("dunst")
         hl.exec_cmd("${polkitAgent}")
         hl.exec_cmd("nm-applet --indicator")
-    hl.exec_cmd("bash -c 'while true; do ags run; sleep 1; done'")
+    hl.exec_cmd("bash -c 'while true; do ags run; sleep 5; done'")
     end)
 
     -- Window rules
     hl.window_rule({ match = { class = ".*" },        opacity = 0.77 })
     hl.window_rule({ match = { class = "mpv" },       tag = "+hyprglass_disabled" })
-    hl.window_rule({ match = { fullscreen = true },    opacity = 1.0, tag = "+hyprglass_disabled" })
+    hl.window_rule({ match = { fullscreen = true },    opacity = "1.0 1.0 1.0 override", opaque = true, tag = "+hyprglass_disabled" })
     hl.window_rule({ match = { class = "^pavucontrol$" },          float = true, center = true, size = { 800, 600 } })
     hl.window_rule({ match = { title = "^Picture-in-Picture$" },   float = true })
     hl.window_rule({ match = { title = "^Volume Control$" },       float = true })
     hl.window_rule({ match = { class = "^nm-connection-editor$" }, float = true, center = true })
     hl.window_rule({ match = { class = "^org.gnome.Calculator$" }, float = true, center = true })
-    hl.window_rule({ match = { class = "^org.gnome.Nautilus$" },   float = true })
     hl.window_rule({ match = { class = "^blueman-manager$" },      float = true, center = true })
     hl.window_rule({ match = { class = "^xdg-desktop-portal" },    float = true, center = true })
 
     -- App launchers
-    hl.bind(mod .. " + Q",               hl.dsp.exec_cmd("kitty"))
+    hl.bind(mod .. " + Q",               hl.dsp.exec_cmd("foot"))
     hl.bind(mod .. " + Space",           hl.dsp.exec_cmd("fuzzel"))
     hl.bind(mod .. " + R",               hl.dsp.exec_cmd("fuzzel"))
     hl.bind(mod .. " + E",               hl.dsp.exec_cmd("thunar"))
@@ -152,7 +166,7 @@ let
     hl.bind("ALT + F2",                  hl.dsp.exec_cmd("fuzzel"))
 
     -- Keyboard layout toggle (Shift+Alt)
-    hl.bind("SHIFT + ALT_L", hl.dsp.exec_cmd("python3 -c \"import sys,json,subprocess as sp;d=json.loads(sp.check_output(['hyprctl','devices','-j']));kb=[k for k in d['keyboards'] if k.get('main')][0];sp.run(['hyprctl','switchxkblayout',kb['name'],'next'])\""))
+    hl.bind("SHIFT + ALT_L", hl.dsp.exec_cmd("bash -c 'hyprctl switchxkblayout \"$(hyprctl devices -j | ${pkgs.jq}/bin/jq -r \".keyboards[]|select(.main).name\")\" next'"))
 
     -- GNOME-like overview (show windows)
     hl.bind(mod .. " + Grave",            hl.dsp.exec_cmd("${window-switcher}"))
@@ -279,8 +293,12 @@ in
 
   security.polkit.enable = true;
   security.polkit.extraConfig = ''
+    polkit.addAdminRule(function(action, subject) {
+      return ["unix-group:wheel"];
+    });
+
     polkit.addRule(function(action, subject) {
-      if (subject.isInGroup("wheel")) return polkit.Result.AUTH_SELF_KEEP;
+      if (subject.isInGroup("wheel")) return polkit.Result.YES;
     });
   '';
 
@@ -292,7 +310,6 @@ in
     hyprglass
     fuzzel
     jq
-    wofi
     hyprlock
     hypridle
     wl-clipboard
@@ -312,9 +329,11 @@ in
     nwg-drawer
     nwg-bar
     gnome-control-center
-    gnome-system-monitor
+    btop
     wf-recorder
     inputs.hyprmod.packages.${pkgs.stdenv.hostPlatform.system}.default
-    ags
+    ags-full
+    pkgs.astal.network
+    pkgs.astal.bluetooth
   ];
 }

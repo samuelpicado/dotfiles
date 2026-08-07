@@ -6,10 +6,5 @@
     wget
     flatpak
     gnome-software
-    gnumake
-    cmake
-    cpio
-    pkgconf
-    hyprwayland-scanner
   ];
 }

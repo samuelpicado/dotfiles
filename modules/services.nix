@@ -1,7 +1,15 @@
 { config, lib, pkgs, ... }:
 
 {
+  services.logind.settings.Login = {
+    HandlePowerKey = "ignore";
+    HandlePowerKeyLongPress = "ignore";
+  };
+
   services.flatpak.enable = true;
+
+  services.power-profiles-daemon.enable = true;
+  services.thermald.enable = true;
 
   hardware.bluetooth.enable = true;
 

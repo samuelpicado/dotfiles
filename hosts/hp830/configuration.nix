@@ -15,6 +15,7 @@
   services.pipewire.wireplumber.configPackages = [
     (pkgs.writeTextDir "share/wireplumber/wireplumber.conf.d/90-audio-preferences.conf" ''
       wireplumber.settings = {
+        device.restore-profile = false
         default.audio.sink = "alsa_output.pci-0000_00_1f.3-platform-skl_hda_dsp_generic.HiFi__Speaker__sink"
       }
       device.profile.priority.rules = [
