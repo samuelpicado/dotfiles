@@ -114,6 +114,9 @@ function popupWindow(button: Gtk.Button, buildContent: (box: Gtk.Box, rebuild: (
 
     win = new Gtk.Window({ type: Gtk.WindowType.POPUP })
     win.set_screen(button.get_screen())
+    const visual = button.get_screen().get_rgba_visual()
+    if (visual) win.set_visual(visual)
+    win.set_app_paintable(true)
     win.get_style_context().add_class("popup-win")
     win.set_resizable(false)
     win.set_decorated(false)
@@ -121,6 +124,7 @@ function popupWindow(button: Gtk.Button, buildContent: (box: Gtk.Box, rebuild: (
     win.set_skip_pager_hint(true)
 
     const box = new Gtk.Box({ orientation: Gtk.Orientation.VERTICAL, spacing: 0 })
+    box.get_style_context().add_class("popup-content")
     box.width_request = 270
 
     const rebuild = () => {
@@ -444,11 +448,15 @@ App.start({
       font-weight: bold;
     }
     .popup-win {
+      background: transparent;
+      background-image: none;
+      border: none;
+      box-shadow: none;
+    }
+    .popup-content {
       background: rgba(24, 24, 37, 0.97);
       border: 1px solid rgba(137, 180, 250, 0.25);
       border-radius: 14px;
-    }
-    .popup-win > * {
       padding: 0;
     }
     .dim-label {

@@ -2,6 +2,7 @@
 
 let
   hyprglass = pkgs.callPackage ../pkgs/hyprglass.nix { mkHyprlandPlugin = pkgs.hyprlandPlugins.mkHyprlandPlugin; };
+  hyprspace = pkgs.callPackage ../pkgs/hyprspace.nix { };
   polkitAgent = "${pkgs.kdePackages.polkit-kde-agent-1}/libexec/polkit-kde-authentication-agent-1";
   ags-full = pkgs.ags.overrideAttrs (old: {
     buildInputs = (old.buildInputs or []) ++ [ pkgs.astal.network pkgs.astal.bluetooth pkgs.networkmanager ];
@@ -86,8 +87,6 @@ let
 
     -- Gestures (GNOME-like: 3-finger horizontal swipe for workspaces)
     hl.gesture({ fingers = 3, direction = "horizontal", action = "workspace" })
-    -- Vertical workspace gesture reserved for the future vertical workspace flow.
-    hl.gesture({ fingers = 3, direction = "up",        action = "workspace" })
     hl.gesture({ fingers = 4, direction = "up",          action = function() hl.exec_cmd("${window-switcher}") end })
     hl.gesture({ fingers = 4, direction = "down",        action = function() hl.exec_cmd("foot") end })
 
@@ -107,10 +106,24 @@ let
     hl.env("ELECTRON_OZONE_PLATFORM_HINT", "auto")
     hl.env("HYPRLAND_NO_WARNINGS", "1")
 
+    -- Hyprspace registers these options when its plugin is loaded. The guard
+    -- keeps the first config parse valid and applies them on the plugin reload.
+    if hl.plugin.overview then
+        hl.config({
+            plugin = {
+                overview = {
+                    disableGestures = false,
+                    reverseSwipe = false,
+                },
+            },
+        })
+    end
+
     -- HyprGlass
     if hl.plugin.hyprglass then
         local hg = hl.plugin.hyprglass
         hg.config({
+            enabled = false,
             default_theme = "dark",
             default_preset = "glass",
             glass_opacity = 0.85,
@@ -121,16 +134,16 @@ let
             fresnel_strength = 0.3,
             dark = { brightness = 0.78, contrast = 0.92 },
             light = { adaptive_boost = 0.4 },
-            layers = { enabled = 1 },
+            layers = { enabled = true },
         })
-        hg.layer("waybar", { preset = "glass", mask_threshold = 0.05 })
         hg.layer("fuzzel", { preset = "glass", mask_threshold = 0.05 })
-        hg.layer("launcher", { preset = "glass", mask_threshold = 0.05 })
     end
 
     hl.on("hyprland.start", function()
         hl.exec_cmd("hyprctl plugin load ${hyprglass}/lib/hyprglass.so")
-        hl.exec_cmd("systemctl --user start swaybg")
+        hl.exec_cmd("hyprctl plugin load ${hyprspace}/lib/libHyprspace.so")
+        hl.exec_cmd("systemctl --user start wallpaper-cycle.timer")
+        hl.exec_cmd("systemctl --user start wallpaper-cycle.service")
         hl.exec_cmd("hypridle")
         hl.exec_cmd("dunst")
         hl.exec_cmd("${polkitAgent}")
@@ -139,7 +152,7 @@ let
     end)
 
     -- Window rules
-    hl.window_rule({ match = { class = ".*" },        opacity = 0.77 })
+    hl.window_rule({ match = { class = "^(foot|footclient)$" }, opacity = 0.77, tag = "+hyprglass_enabled" })
     hl.window_rule({ match = { class = "mpv" },       tag = "+hyprglass_disabled" })
     hl.window_rule({ match = { fullscreen = true },    opacity = "1.0 1.0 1.0 override", opaque = true, tag = "+hyprglass_disabled" })
     hl.window_rule({ match = { class = "^pavucontrol$" },          float = true, center = true, size = { 800, 600 } })
@@ -308,6 +321,7 @@ in
 
   environment.systemPackages = with pkgs; [
     hyprglass
+    hyprspace
     fuzzel
     jq
     hyprlock

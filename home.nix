@@ -93,10 +93,6 @@
           src = "${pkgs.zsh-you-should-use}/share/zsh/plugins/you-should-use";
         }
         {
-          name = "zsh-autocomplete";
-          src = "${pkgs.zsh-autocomplete}/share/zsh-autocomplete";
-        }
-        {
           name = "auto-notify";
           src = pkgs.fetchFromGitHub {
             owner = "MichaelAquilina";

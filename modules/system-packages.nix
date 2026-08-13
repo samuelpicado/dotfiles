@@ -5,6 +5,7 @@
     vim
     wget
     flatpak
+    intel-gpu-tools
     gnome-software
   ];
 }

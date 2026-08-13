@@ -1,11 +1,73 @@
 { config, lib, pkgs, ... }:
 
 let
+  current-wallpaper = "${config.home.homeDirectory}/.cache/current-wallpaper";
   wallpaper = pkgs.fetchurl {
-    url = "https://images.unsplash.com/photo-1505144808419-1957a94ca61e?w=3840";
+    url = "https://images.unsplash.com/photo-1441974231531-c6227db76b6e?w=3840";
     name = "wallpaper.jpg";
+    hash = "sha256-Jenp9iP9BmCRvrlPeEKAwLHVbSdwxDalJRCmeT1L55Q=";
+  };
+  wallpaper-ocean = pkgs.fetchurl {
+    url = "https://images.unsplash.com/photo-1505144808419-1957a94ca61e?w=3840";
+    name = "wallpaper-ocean.jpg";
     hash = "sha256-lEyCISeq06boUAuYYOdBOdCdypNYXntk+Z8F3BPvfqo=";
   };
+  wallpaper-lavender = pkgs.fetchurl {
+    url = "https://images.unsplash.com/photo-1499002238440-d264edd596ec?w=3840";
+    name = "wallpaper-lavender.jpg";
+    hash = "sha256-D3wybsHoJCeuMEF80nHkvCqWq9Dss1hUK4vMhmxuhXk=";
+  };
+  terminal-opener = pkgs.writeShellScriptBin "exo-open" ''
+    set -euo pipefail
+    working_dir="$PWD"
+    launch=""
+    while [ "$#" -gt 0 ]; do
+      case "$1" in
+        --launch)
+          launch="''${2:-}"
+          shift 2
+          ;;
+        --working-directory=*)
+          working_dir="''${1#*=}"
+          shift
+          ;;
+        --working-directory)
+          working_dir="''${2:-$PWD}"
+          shift 2
+          ;;
+        *)
+          shift
+          ;;
+      esac
+    done
+
+    if [ "$launch" = "TerminalEmulator" ]; then
+      exec ${pkgs.foot}/bin/foot --working-directory="$working_dir"
+    fi
+
+    exit 0
+  '';
+  wallpaper-cycle = pkgs.writeShellScript "wallpaper-cycle" ''
+    set -eu
+    wallpapers=(
+      "${wallpaper}"
+      "${wallpaper-ocean}"
+      "${wallpaper-lavender}"
+    )
+    state_file="${config.home.homeDirectory}/.cache/wallpaper-index"
+    mkdir -p "$(dirname "$state_file")" "$(dirname "${current-wallpaper}")"
+    index=0
+    if [ -s "$state_file" ]; then
+      index=$(cat "$state_file")
+    fi
+    case "$index" in
+      0|1|2) ;;
+      *) index=0 ;;
+    esac
+    ln -sfn "''${wallpapers[$index]}" "${current-wallpaper}"
+    printf '%s\n' "$(( (index + 1) % ''${#wallpapers[@]} ))" > "$state_file"
+    systemctl --user restart swaybg
+  '';
 in
 
 {
@@ -257,6 +319,7 @@ in
 
   home.packages = with pkgs; [
     foot
+    terminal-opener
     fuzzel
     swaybg
     papirus-icon-theme
@@ -271,7 +334,10 @@ in
     nwg-drawer
     nwg-bar
     blueman
-    proton-vpn
+    enchant
+    hunspell
+    hunspellDicts.en_US
+    hunspellDicts.es-any
   ];
 
   services.hypridle = {
@@ -302,7 +368,7 @@ in
       PartOf = [ "graphical-session.target" ];
     };
     Service = {
-      ExecStart = "${pkgs.swaybg}/bin/swaybg -i ${wallpaper} -m fill";
+       ExecStart = "${pkgs.swaybg}/bin/swaybg -i ${current-wallpaper} -m fill";
       Restart = "on-failure";
       RestartSec = 1;
     };
@@ -311,8 +377,107 @@ in
     };
   };
 
+  systemd.user.services.wallpaper-cycle = {
+    Unit = {
+      Description = "Rotate desktop wallpaper";
+      After = [ "graphical-session.target" ];
+      PartOf = [ "graphical-session.target" ];
+    };
+    Service = {
+      Type = "oneshot";
+      ExecStart = "${wallpaper-cycle}";
+    };
+  };
+
+  systemd.user.timers.wallpaper-cycle = {
+    Unit = {
+      Description = "Rotate desktop wallpaper every four hours";
+      PartOf = [ "graphical-session.target" ];
+    };
+    Timer = {
+      OnBootSec = "1min";
+      OnUnitActiveSec = "4h";
+      Persistent = true;
+    };
+    Install = {
+      WantedBy = [ "graphical-session.target" ];
+    };
+  };
+
   xdg.configFile."ags/app.tsx".source = ../ags/app.tsx;
   xdg.configFile."ags/tsconfig.json".source = ../ags/tsconfig.json;
+
+  xdg.configFile."hypr/hyprlock.conf".text = ''
+    general {
+        hide_cursor = true
+        grace = 0
+        no_fade_in = false
+    }
+
+    background {
+        monitor =
+        path = ${current-wallpaper}
+        color = rgba(17, 17, 27, 1.0)
+        blur_passes = 2
+        blur_size = 4
+        contrast = 0.9
+        brightness = 0.75
+    }
+
+    label {
+        monitor =
+        text = cmd[update:1000] ${pkgs.coreutils}/bin/date '+%H:%M'
+        color = rgba(205, 214, 244, 0.96)
+        font_size = 64
+        font_family = JetBrainsMono Nerd Font
+        position = 0, 145
+        halign = center
+        valign = center
+    }
+
+    label {
+        monitor =
+        text = cmd[update:60000] ${pkgs.coreutils}/bin/date '+%A, %d %B'
+        color = rgba(205, 214, 244, 0.72)
+        font_size = 16
+        font_family = JetBrainsMono Nerd Font
+        position = 0, 78
+        halign = center
+        valign = center
+    }
+
+    label {
+        monitor =
+        text = cmd[update:60000] ${pkgs.bash}/bin/bash -c 'capacity=$(${pkgs.coreutils}/bin/cat /sys/class/power_supply/BAT*/capacity 2>/dev/null | ${pkgs.coreutils}/bin/head -1); status=$(${pkgs.coreutils}/bin/cat /sys/class/power_supply/BAT*/status 2>/dev/null | ${pkgs.coreutils}/bin/head -1); [ -n "$capacity" ] && printf "%s%%  %s" "$capacity" "$status"'
+        color = rgba(205, 214, 244, 0.62)
+        font_size = 13
+        font_family = JetBrainsMono Nerd Font
+        position = 0, -42
+        halign = center
+        valign = center
+    }
+
+    input-field {
+        monitor =
+        size = 320, 54
+        outline_thickness = 1
+        outer_color = rgba(0, 0, 0, 0)
+        inner_color = rgba(0, 0, 0, 0.28)
+        font_color = rgba(205, 214, 244, 0.95)
+        fade_on_empty = false
+        dots_size = 0.22
+        dots_spacing = 0.28
+        dots_center = true
+        placeholder_text = <i>Enter password</i>
+        check_color = rgba(166, 227, 161, 0.9)
+        fail_color = rgba(243, 139, 168, 0.9)
+        capslock_color = rgba(249, 226, 175, 0.9)
+        fail_text = <i>Authentication failed</i>
+        position = 0, -125
+        halign = center
+        valign = center
+    }
+  '';
 
   xdg.configFile."fuzzel/fuzzel.ini".text = ''
     [main]
@@ -369,4 +534,8 @@ in
       };
     };
   };
+
+  xdg.configFile."xfce4/helpers.rc".text = ''
+    TerminalEmulator=foot
+  '';
 }
