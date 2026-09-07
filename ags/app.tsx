@@ -9,7 +9,7 @@ import Bluetooth from "gi://AstalBluetooth"
 
 const TOP = Astal.WindowAnchor.TOP
 const OVERLAY = Astal.Layer.OVERLAY
-const IGNORE = Astal.Exclusivity.IGNORE
+const EXCLUSIVE = Astal.Exclusivity.EXCLUSIVE
 
 const network = Network.get_default()
 const bluetooth = Bluetooth.get_default()
@@ -389,15 +389,15 @@ App.start({
       background: transparent;
     }
     .island-pill {
-      background-color: rgba(24, 24, 37, 0.92);
+      background-color: #000000;
       color: #cdd6f4;
       border: 1px solid rgba(137, 180, 250, 0.2);
       border-radius: 9999px;
-      padding: 0 6px;
-      margin-top: 6px;
-      min-height: 28px;
+      padding: 0;
+      margin-top: 2px;
+      min-height: 18px;
       font-family: "JetBrainsMono Nerd Font";
-      font-size: 13px;
+      font-size: 11px;
     }
     .sep {
       color: rgba(137, 180, 250, 0.15);
@@ -516,7 +516,7 @@ App.start({
       name="island"
       namespace="island"
       layer={OVERLAY}
-      exclusivity={IGNORE}
+      exclusivity={EXCLUSIVE}
       keymode={Astal.Keymode.NONE}
       anchor={TOP}
       application={App}

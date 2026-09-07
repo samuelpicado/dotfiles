@@ -28,7 +28,8 @@
     nodejs
     # Free Pascal
     fpc
-    lazarus
+    lazarus-qt5
+    codex
   ];
 
   # --- Programs ---
@@ -86,6 +87,7 @@
         freeram = "rm -fv /tmp/.79*.so && echo 'Temp .so files cleaned'";
         zon = "sudo systemctl start zerotierone";
         zoff = "sudo systemctl stop zerotierone";
+        #sudo systemctl start docker
       };
       plugins = [
         {
@@ -129,11 +131,7 @@
     };
 
     chromium = {
-      enable = true;
-      extensions = [
-        { id = "ddkjiahejlhfcafbddmgiahcphecmpfh"; }
-        { id = "nngceckbapebfimnlniiiahkandclblb"; }
-      ];
+      enable = false;
     };
 
     direnv = {

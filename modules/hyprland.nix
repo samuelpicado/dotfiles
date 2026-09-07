@@ -7,6 +7,158 @@ let
   ags-full = pkgs.ags.overrideAttrs (old: {
     buildInputs = (old.buildInputs or []) ++ [ pkgs.astal.network pkgs.astal.bluetooth pkgs.networkmanager ];
   });
+  display-switcher = pkgs.writeShellScript "display-switcher" ''
+    H=${pkgs.hyprland}/bin/hyprctl
+    JQ=${pkgs.jq}/bin/jq
+
+    INTERNAL=$($H monitors all -j | $JQ -r '[.[] | select(.name | startswith("eDP"))] | first | .name // empty')
+    EXTERNAL=$($H monitors all -j | $JQ -r '[.[] | select(.name | startswith("eDP") | not)] | first | .name // empty')
+
+    if [ -z "$EXTERNAL" ]; then
+      ${pkgs.libnotify}/bin/notify-send 'Pantalla' 'No hay monitor externo conectado'
+      exit 0
+    fi
+
+    scale_of() {
+      $H monitors all -j | $JQ -r --arg m "$1" '[.[] | select(.name == $m)] | first | .scale // 1'
+    }
+
+    setmon() {
+      $H eval "hl.monitor({ output = \"$1\", $2 })" >/dev/null
+    }
+
+    SI=$(scale_of "$INTERNAL"); SE=$(scale_of "$EXTERNAL")
+
+    enable_mon() {
+      setmon "$1" "mirror = \"none\", disabled = false, mode = \"preferred\", position = \"$2\", scale = $(scale_of "$1")"
+      sleep 0.4
+    }
+
+    is_active() {
+      $H monitors -j | $JQ -e --arg m "$1" '.[] | select(.name == $m)' >/dev/null
+    }
+
+    # Disable $1 only after confirming keeper $2 is rendering; if the disable
+    # ever leaves zero active outputs, bring the keeper back immediately.
+    safe_disable() {
+      if ! is_active "$2"; then
+        enable_mon "$2" "auto"
+      fi
+      setmon "$1" "disabled = true"
+      sleep 0.3
+      if [ "$($H monitors -j | $JQ 'length')" -eq 0 ]; then
+        enable_mon "$2" "auto"
+      fi
+    }
+
+    CHOICE=$(printf 'Extender pantalla\nProyectar pantalla\nSolo laptop\nSolo monitor externo' \
+      | ${pkgs.fuzzel}/bin/fuzzel -d --with-nth=1 --only-match --prompt="Pantalla: ") || exit 0
+
+    case "$CHOICE" in
+      "Extender pantalla")
+        $H eval 'hl.config({ cursor = { no_hardware_cursors = false } })' >/dev/null
+        enable_mon "$INTERNAL" "auto"
+        enable_mon "$EXTERNAL" "auto-right"
+        ;;
+      "Proyectar pantalla")
+        $H eval 'hl.config({ cursor = { no_hardware_cursors = true } })' >/dev/null
+        $H eval "hl.monitor({ output = \"$INTERNAL\", mode = \"preferred\", position = \"auto\", scale = $SI }); hl.monitor({ output = \"$EXTERNAL\", mirror = \"none\" }); hl.monitor({ output = \"$EXTERNAL\", disabled = false, mode = \"preferred\", position = \"auto\", scale = $SE, mirror = \"$INTERNAL\" })" >/dev/null
+        ;;
+      "Solo laptop")
+        $H eval 'hl.config({ cursor = { no_hardware_cursors = false } })' >/dev/null
+        enable_mon "$INTERNAL" "auto"
+        safe_disable "$EXTERNAL" "$INTERNAL"
+        ;;
+      "Solo monitor externo")
+        $H eval 'hl.config({ cursor = { no_hardware_cursors = false } })' >/dev/null
+        enable_mon "$EXTERNAL" "auto"
+        safe_disable "$INTERNAL" "$EXTERNAL"
+        ;;
+      *)
+        exit 0
+        ;;
+    esac
+
+    # Failsafe: never leave the user without any active output.
+    if [ "$($H monitors -j | $JQ 'length')" -eq 0 ]; then
+      enable_mon "$INTERNAL" "auto"
+    fi
+
+    # Re-sync wallpaper daemon: awww misses outputs that exist when it starts,
+    # but registers hotplugged ones correctly. Bounce any monitor it does not
+    # know about, then repaint the wallpaper everywhere.
+    sleep 0.3
+    AWWW=${pkgs.awww}/bin/awww
+    ACTIVE=$($H monitors -j | $JQ -r '.[].name' | sort)
+    KNOWN=$($AWWW query 2>/dev/null | awk -F': ' '/^: /{print $2}' | awk -F: '{print $1}' | sed 's/ *$//' | sort)
+    MISSING=$(comm -23 <(echo "$ACTIVE") <(echo "$KNOWN") | grep -v '^$')
+
+    for m in $MISSING; do
+      MS=$(scale_of "$m")
+      $H eval "hl.monitor({ output = \"$m\", disabled = true })" >/dev/null
+      sleep 0.15
+      $H eval "hl.monitor({ output = \"$m\", disabled = false, mode = \"preferred\", position = \"auto\", scale = $MS })" >/dev/null
+      sleep 0.5
+    done
+
+    WP="$HOME/.cache/current-wallpaper"
+    if [ -e "$WP" ]; then
+      $AWWW img "$WP" --transition-type none >/dev/null 2>&1
+    fi
+    ${pkgs.libnotify}/bin/notify-send 'Pantalla' "$CHOICE"
+  '';
+
+  audio-switcher = pkgs.writeShellScript "audio-switcher" ''
+    JQ=${pkgs.jq}/bin/jq
+    WPCTL=${pkgs.wireplumber}/bin/wpctl
+    CARD="alsa_card.pci-0000_00_1f.3-platform-skl_hda_dsp_generic"
+
+    WPID=$($WPCTL status 2>/dev/null | grep '\[alsa\]' | head -1 | sed 's/[^0-9]*\([0-9]*\)\..*/\1/')
+    [ -z "$WPID" ] && exit 0
+
+    TMPF=$(mktemp /tmp/opencode/asw.XXXXXX)
+    trap 'rm -f "$TMPF"' EXIT
+    pw-dump > "$TMPF" 2>/dev/null
+
+    # Output routes (ports) of the analog card, e.g. Speaker / Headphones
+    MAP=$($JQ -r --arg c "$CARD" '[.[] | select(.info.props."device.name"? == $c)][0].info.params.EnumRoute[]? | select(.direction == "Output") | "\(.index)|\(.description)|\(.devices[0])"' "$TMPF")
+    CUR=$($JQ -r --arg c "$CARD" '[.[] | select(.info.props."device.name"? == $c)][0].info.params.Route[]? | select(.direction == "Output") | .description // empty' "$TMPF")
+
+    MENU=""
+    while IFS='|' read -r IDX DESC DEV; do
+      [ -z "$IDX" ] && continue
+      MARK=""
+      [ "$DESC" = "$CUR" ] && MARK=" [actual]"
+      MENU+="''${DESC}''${MARK}\n"
+    done <<EOF
+$MAP
+EOF
+
+    CHOICE=$(printf "$MENU" | ${pkgs.fuzzel}/bin/fuzzel -d --with-nth=1 --only-match --prompt="Salida: ") || exit 0
+    CHOICE="''${CHOICE% \[actual\]}"
+
+    LINE=$(echo "$MAP" | grep -F "|$CHOICE|" | head -1)
+    IDX=$(echo "$LINE" | cut -d'|' -f1)
+    DEV=$(echo "$LINE" | cut -d'|' -f3)
+    case "$IDX" in
+      *[!0-9]*|"") ${pkgs.libnotify}/bin/notify-send 'Audio' 'Ruta no encontrada'; exit 1;;
+    esac
+
+    ${pkgs.pipewire}/bin/pw-cli s "$WPID" Route "{ index = $IDX, device = $DEV, save = true }" >/dev/null 2>&1
+    ${pkgs.libnotify}/bin/notify-send 'Audio' "Salida: $CHOICE"
+  '';
+
+  display-rescue = pkgs.writeShellScript "display-rescue" ''
+    H=${pkgs.hyprland}/bin/hyprctl
+    JQ=${pkgs.jq}/bin/jq
+    $H eval 'hl.config({ cursor = { no_hardware_cursors = false } })' >/dev/null
+    for m in $($H monitors all -j | $JQ -r '.[].name'); do
+      S=$($H monitors all -j | $JQ -r --arg m "$m" '[.[] | select(.name == $m)] | first | .scale // 1')
+      $H eval "hl.monitor({ output = \"$m\", mirror = \"none\", disabled = false, mode = \"preferred\", position = \"auto\", scale = $S })" >/dev/null
+      sleep 0.2
+    done
+  '';
+
   window-switcher = pkgs.writeShellScript "window-switcher" ''
     ${pkgs.hyprland}/bin/hyprctl clients -j \
       | ${pkgs.jq}/bin/jq -r '.[] | select(.title != "" and .mapped == true) | [.title, .address] | @tsv' \
@@ -41,7 +193,7 @@ let
             sensitivity = 0,
         },
         gestures = {
-            workspace_swipe_distance = 300,
+            workspace_swipe_distance = 200,
             workspace_swipe_touch = true,
             workspace_swipe_touch_invert = false,
             workspace_swipe_min_speed_to_force = 30,
@@ -67,13 +219,18 @@ let
             },
             shadow = {
                 enabled     = true,
-                range       = 8,
+                range       = 4,
                 render_power = 2,
             },
         },
         misc = {
             disable_hyprland_logo = true,
             disable_splash_rendering = true,
+            animate_manual_resizes = false,
+            animate_mouse_windowdragging = false,
+        },
+        render = {
+            direct_scanout = true,
         },
         xwayland = {
             force_zero_scaling = true,
@@ -92,10 +249,10 @@ let
 
     hl.curve("easeOutQuint",     { type = "bezier", points = { {0.23, 1}, {0.32, 1} } })
     hl.curve("easeInOutCubic",   { type = "bezier", points = { {0.65, 0}, {0.35, 1} } })
-    hl.animation({ leaf = "windows",     enabled = true, speed = 3, bezier = "easeOutQuint",   style = "popin" })
-    hl.animation({ leaf = "windowsOut",  enabled = true, speed = 3, bezier = "easeOutQuint",   style = "popin" })
-    hl.animation({ leaf = "fade",        enabled = true, speed = 3, bezier = "easeOutQuint" })
-    hl.animation({ leaf = "workspaces",  enabled = true, speed = 4, bezier = "easeInOutCubic", style = "slide" })
+    hl.animation({ leaf = "windows",     enabled = true, speed = 4, bezier = "easeOutQuint",   style = "popin" })
+    hl.animation({ leaf = "windowsOut",  enabled = false })
+    hl.animation({ leaf = "fade",        enabled = true, speed = 4, bezier = "easeOutQuint" })
+    hl.animation({ leaf = "workspaces",  enabled = true, speed = 6, bezier = "easeOutQuint", style = "slide" })
     hl.animation({ leaf = "border",      enabled = false })
 
     hl.env("XDG_CURRENT_DESKTOP", "Hyprland")
@@ -105,6 +262,7 @@ let
     hl.env("GDK_DPI_SCALE",       "1")
     hl.env("ELECTRON_OZONE_PLATFORM_HINT", "auto")
     hl.env("HYPRLAND_NO_WARNINGS", "1")
+
 
     -- Hyprspace registers these options when its plugin is loaded. The guard
     -- keeps the first config parse valid and applies them on the plugin reload.
@@ -140,8 +298,13 @@ let
     end
 
     hl.on("hyprland.start", function()
+        hl.exec_cmd("systemctl --user import-environment WAYLAND_DISPLAY XDG_CURRENT_DESKTOP XDG_SESSION_TYPE XDG_SESSION_DESKTOP")
+        hl.exec_cmd("dbus-update-activation-environment --all")
+        hl.exec_cmd("systemctl --user start hyprland-session-bridge.service")
+        hl.exec_cmd("systemctl --user start xdg-desktop-portal-hyprland.service")
         hl.exec_cmd("hyprctl plugin load ${hyprglass}/lib/hyprglass.so")
         hl.exec_cmd("hyprctl plugin load ${hyprspace}/lib/libHyprspace.so")
+        hl.exec_cmd("systemctl --user start awww.service")
         hl.exec_cmd("systemctl --user start wallpaper-cycle.timer")
         hl.exec_cmd("systemctl --user start wallpaper-cycle.service")
         hl.exec_cmd("hypridle")
@@ -184,6 +347,15 @@ let
     -- GNOME-like overview (show windows)
     hl.bind(mod .. " + Grave",            hl.dsp.exec_cmd("${window-switcher}"))
     hl.bind(mod .. " + SHIFT + Grave",    hl.dsp.exec_cmd("${window-switcher}"))
+
+    -- Display switcher (like Win+P). Plain F1 on this HP emits
+    -- KEY_SWITCHVIDEOMODE (evdev 227 -> XKB code:235); Fn+F1 would emit F1.
+    hl.bind("code:235",                  hl.dsp.exec_cmd("${display-switcher}"))
+    hl.bind(mod .. " + SHIFT + P",       hl.dsp.exec_cmd("${display-switcher}"))
+    -- Display rescue: re-enable every monitor (works with all screens off)
+    hl.bind(mod .. " + SHIFT + M",       hl.dsp.exec_cmd("${display-rescue}"))
+    -- Audio output switcher (Speaker / Headphones)
+    hl.bind(mod .. " + SHIFT + A",       hl.dsp.exec_cmd("${audio-switcher}"))
 
     -- Window management
     hl.bind(mod .. " + C",               hl.dsp.window.close())
@@ -269,6 +441,9 @@ let
     ln -sf ${hyprlandConf} "$HOME/.config/hypr/hyprland.lua"
     ln -sf ${hyprlandConf} "$HOME/.config/hypr/hyprland.conf"
 
+    systemctl --user import-environment WAYLAND_DISPLAY XDG_CURRENT_DESKTOP XDG_SESSION_TYPE XDG_SESSION_DESKTOP
+    dbus-update-activation-environment --all
+
     exec ${pkgs.hyprland}/bin/start-hyprland
   '';
 in
@@ -345,9 +520,29 @@ in
     gnome-control-center
     btop
     wf-recorder
+    awww
     inputs.hyprmod.packages.${pkgs.stdenv.hostPlatform.system}.default
     ags-full
     pkgs.astal.network
     pkgs.astal.bluetooth
   ];
+
+  programs.thunar = {
+    enable = true;
+    plugins = with pkgs; [
+      thunar-archive-plugin
+      thunar-volman
+    ];
+  };
+
+  systemd.user.services.hyprland-session-bridge = {
+    description = "Activate graphical-session.target for Hyprland";
+    serviceConfig = {
+      Type = "oneshot";
+      RemainAfterExit = true;
+      ExecStart = "${pkgs.coreutils}/bin/true";
+    };
+    requires = [ "graphical-session.target" ];
+    after = [ "graphical-session.target" ];
+  };
 }

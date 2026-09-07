@@ -47,6 +47,7 @@ let
 
     exit 0
   '';
+
   wallpaper-cycle = pkgs.writeShellScript "wallpaper-cycle" ''
     set -eu
     wallpapers=(
@@ -55,7 +56,7 @@ let
       "${wallpaper-lavender}"
     )
     state_file="${config.home.homeDirectory}/.cache/wallpaper-index"
-    mkdir -p "$(dirname "$state_file")" "$(dirname "${current-wallpaper}")"
+    mkdir -p "$(dirname "$state_file")"
     index=0
     if [ -s "$state_file" ]; then
       index=$(cat "$state_file")
@@ -64,10 +65,9 @@ let
       0|1|2) ;;
       *) index=0 ;;
     esac
-    ln -sfn "''${wallpapers[$index]}" "${current-wallpaper}"
+    ${pkgs.awww}/bin/awww img "''${wallpapers[$index]}" --transition-type fade --transition-duration 1.5
     printf '%s\n' "$(( (index + 1) % ''${#wallpapers[@]} ))" > "$state_file"
-    systemctl --user restart swaybg
-  '';
+ '';
 in
 
 {
@@ -321,14 +321,14 @@ in
     foot
     terminal-opener
     fuzzel
-    swaybg
+    awww
     papirus-icon-theme
 
-    thunar
-    thunar-archive-plugin
-    thunar-volman
     gnome-calculator
     file-roller
+    zip
+    unzip
+    p7zip
     imv
     mpv
     nwg-drawer
@@ -349,26 +349,33 @@ in
         lock_cmd = "hyprlock";
       };
       listener = [
-        { timeout = 300; on-timeout = "hyprlock"; }
-        { timeout = 600; on-timeout = "hyprctl dispatch 'hl.dsp.dpms({action = \"off\"})'"; on-resume = "hyprctl dispatch 'hl.dsp.dpms({action = \"on\"})'"; }
+        { timeout = 1800; on-timeout = "hyprlock"; }
+        { timeout = 2100; on-timeout = "hyprctl dispatch 'hl.dsp.dpms({action = \"off\"})'"; on-resume = "hyprctl dispatch 'hl.dsp.dpms({action = \"on\"})'"; }
       ];
     };
   };
 
   dconf.settings = {
+    "org/gnome/desktop/interface" = {
+      color-scheme = "prefer-dark";
+      gtk-theme = "Adwaita-dark";
+      icon-theme = "Papirus-Dark";
+      cursor-theme = "Adwaita";
+    };
     "org/gnome/shell/extensions/user-theme" = {
       name = "Adwaita-dark";
     };
   };
 
-  systemd.user.services.swaybg = {
+  systemd.user.services.awww = {
     Unit = {
-      Description = "Wallpaper daemon";
+      Description = "Animated wallpaper daemon";
       After = [ "graphical-session.target" ];
       PartOf = [ "graphical-session.target" ];
     };
     Service = {
-       ExecStart = "${pkgs.swaybg}/bin/swaybg -i ${current-wallpaper} -m fill";
+      ExecStartPre = "-/run/current-system/sw/bin/rm -f /run/user/%U/awww.sock";
+      ExecStart = "${pkgs.awww}/bin/awww-daemon";
       Restart = "on-failure";
       RestartSec = 1;
     };
@@ -377,10 +384,11 @@ in
     };
   };
 
+
   systemd.user.services.wallpaper-cycle = {
     Unit = {
       Description = "Rotate desktop wallpaper";
-      After = [ "graphical-session.target" ];
+      After = [ "graphical-session.target" "awww.service" ];
       PartOf = [ "graphical-session.target" ];
     };
     Service = {
