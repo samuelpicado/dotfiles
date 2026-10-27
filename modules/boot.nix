@@ -2,7 +2,7 @@
 
 {
   boot = {
-    kernelPackages = pkgs.cachyosKernels.linuxPackages-cachyos-bore-lto;
+    kernelPackages = pkgs.linuxPackages_zen;
     loader = {
       systemd-boot = {
         enable = true;

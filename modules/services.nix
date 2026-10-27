@@ -9,6 +9,7 @@
   services.flatpak.enable = true;
 
   services.power-profiles-daemon.enable = true;
+  services.upower.enable = true;
   services.thermald.enable = true;
 
   services.gvfs.enable = true;
@@ -32,5 +33,5 @@
   services.zerotierone.enable = true;
   services.zerotierone.joinNetworks = [ "88c5b1f339c29ad7" ];
 
-  virtualisation.docker.enable = false;
+  virtualisation.docker.enable = true;
 }

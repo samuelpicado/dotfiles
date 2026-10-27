@@ -29,7 +29,7 @@
     # Free Pascal
     fpc
     lazarus-qt5
-    codex
+    (pkgs.callPackage ./pkgs/codex.nix { })
   ];
 
   # --- Programs ---

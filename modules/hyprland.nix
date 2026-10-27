@@ -5,7 +5,11 @@ let
   hyprspace = pkgs.callPackage ../pkgs/hyprspace.nix { };
   polkitAgent = "${pkgs.kdePackages.polkit-kde-agent-1}/libexec/polkit-kde-authentication-agent-1";
   ags-full = pkgs.ags.overrideAttrs (old: {
-    buildInputs = (old.buildInputs or []) ++ [ pkgs.astal.network pkgs.astal.bluetooth pkgs.networkmanager ];
+    buildInputs = (old.buildInputs or []) ++ [
+      pkgs.astal.network pkgs.astal.bluetooth pkgs.astal.tray
+      pkgs.astal.wireplumber pkgs.astal.battery pkgs.astal.hyprland
+      pkgs.networkmanager
+    ];
   });
   display-switcher = pkgs.writeShellScript "display-switcher" ''
     H=${pkgs.hyprland}/bin/hyprctl
@@ -206,6 +210,11 @@ EOF
             gaps_in  = 4,
             gaps_out = 8,
             border_size = 1,
+            -- Windows-style resize: floating windows can be resized by
+            -- dragging any border or corner without a modifier key.
+            resize_on_border = true,
+            extend_border_grab_area = 8,
+            hover_icon_on_border = true,
             ["col.active_border"]   = "rgba(00000000)",
             ["col.inactive_border"] = "rgba(45475acc)",
         },
@@ -254,6 +263,9 @@ EOF
     hl.animation({ leaf = "fade",        enabled = true, speed = 4, bezier = "easeOutQuint" })
     hl.animation({ leaf = "workspaces",  enabled = true, speed = 6, bezier = "easeOutQuint", style = "slide" })
     hl.animation({ leaf = "border",      enabled = false })
+    hl.animation({ leaf = "layersIn",    enabled = true, speed = 3, bezier = "easeOutQuint", style = "fade" })
+    hl.animation({ leaf = "layersOut",   enabled = true, speed = 2, bezier = "easeInOutCubic", style = "fade" })
+    hl.layer_rule({ match = { namespace = "^notifications$" }, animation = "slide right" })
 
     hl.env("XDG_CURRENT_DESKTOP", "Hyprland")
     hl.env("XDG_SESSION_TYPE",    "wayland")
@@ -302,22 +314,26 @@ EOF
         hl.exec_cmd("dbus-update-activation-environment --all")
         hl.exec_cmd("systemctl --user start hyprland-session-bridge.service")
         hl.exec_cmd("systemctl --user start xdg-desktop-portal-hyprland.service")
-        hl.exec_cmd("hyprctl plugin load ${hyprglass}/lib/hyprglass.so")
-        hl.exec_cmd("hyprctl plugin load ${hyprspace}/lib/libHyprspace.so")
+        -- HyprGlass registers its Lua API only after loading. Reload once both
+        -- plugins are present so the guarded configuration above is applied.
+        hl.exec_cmd("hyprctl plugin load ${hyprglass}/lib/hyprglass.so && hyprctl plugin load ${hyprspace}/lib/libHyprspace.so && hyprctl reload")
         hl.exec_cmd("systemctl --user start awww.service")
         hl.exec_cmd("systemctl --user start wallpaper-cycle.timer")
         hl.exec_cmd("systemctl --user start wallpaper-cycle.service")
         hl.exec_cmd("hypridle")
-        hl.exec_cmd("dunst")
         hl.exec_cmd("${polkitAgent}")
-        hl.exec_cmd("nm-applet --indicator")
-    hl.exec_cmd("bash -c 'while true; do ags run; sleep 5; done'")
+        hl.exec_cmd("systemctl --user start island.service")
     end)
 
     -- Window rules
+    -- Keep Foot opt-in and pin its appearance to HyprGlass' built-in glass
+    -- preset, rather than allowing the plugin default to select another look.
+    -- Do not use a fullscreen `hyprglass_disabled` tag: Hyprland can retain
+    -- that dynamic tag after leaving fullscreen, and HyprGlass gives it
+    -- priority over `hyprglass_enabled`.
     hl.window_rule({ match = { class = "^(foot|footclient)$" }, opacity = 0.77, tag = "+hyprglass_enabled" })
+    hl.window_rule({ match = { class = "^(foot|footclient)$" }, tag = "+hyprglass_preset_glass" })
     hl.window_rule({ match = { class = "mpv" },       tag = "+hyprglass_disabled" })
-    hl.window_rule({ match = { fullscreen = true },    opacity = "1.0 1.0 1.0 override", opaque = true, tag = "+hyprglass_disabled" })
     hl.window_rule({ match = { class = "^pavucontrol$" },          float = true, center = true, size = { 800, 600 } })
     hl.window_rule({ match = { title = "^Picture-in-Picture$" },   float = true })
     hl.window_rule({ match = { title = "^Volume Control$" },       float = true })
@@ -471,7 +487,7 @@ in
 
   xdg.portal = {
     enable = true;
-    extraPortals = with pkgs; [ xdg-desktop-portal-hyprland xdg-desktop-portal-gtk ];
+    extraPortals = with pkgs; [ xdg-desktop-portal-gtk ];
     configPackages = [ pkgs.hyprland ];
     config = {
       common.default = "*";
@@ -509,7 +525,6 @@ in
     brightnessctl
     playerctl
     pavucontrol
-    networkmanagerapplet
     kdePackages.polkit-kde-agent-1
     nerd-fonts.jetbrains-mono
     libnotify
@@ -525,6 +540,7 @@ in
     ags-full
     pkgs.astal.network
     pkgs.astal.bluetooth
+    pkgs.astal.tray
   ];
 
   programs.thunar = {
@@ -533,6 +549,22 @@ in
       thunar-archive-plugin
       thunar-volman
     ];
+  };
+
+  systemd.user.services.island = {
+    description = "Floating island";
+    wantedBy = [ "graphical-session.target" ];
+    after = [ "graphical-session.target" ];
+    partOf = [ "graphical-session.target" ];
+    path = with pkgs; [
+      dunst pavucontrol blueman gnome-control-center hyprlock hyprland
+      systemd networkmanagerapplet geteduroam
+    ];
+    serviceConfig = {
+      ExecStart = "${ags-full}/bin/ags run";
+      Restart = "on-failure";
+      RestartSec = 2;
+    };
   };
 
   systemd.user.services.hyprland-session-bridge = {

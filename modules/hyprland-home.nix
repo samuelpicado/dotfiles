@@ -73,45 +73,59 @@ in
 {
   services.dunst = {
     enable = true;
+    iconTheme = {
+      package = pkgs.papirus-icon-theme;
+      name = "Papirus";
+      size = "32x32";
+    };
     settings = {
       global = {
         monitor = 0;
         follow = "mouse";
-        width = 300;
-        height = 300;
+        width = 320;
+        height = "(0, 160)";
         origin = "top-right";
-        offset = "10x50";
+        offset = "(16, 42)";
         scale = 0;
-        notification_limit = 20;
+        notification_limit = 3;
         progress_bar = true;
-        transparency = 10;
-        corner_radius = 8;
-        horizontal_padding = 12;
+        transparency = 3;
+        corner_radius = 16;
+        padding = 14;
+        horizontal_padding = 16;
+        gap_size = 8;
         frame_width = 1;
-        frame_color = "#89b4fa";
-        font = "JetBrainsMono Nerd Font 11";
-        foreground = "#cdd6f4";
-        background = "#1e1e2eCC";
+        frame_color = "#343944";
+        font = "Sans 10";
+        foreground = "#eef0f4";
+        background = "#14151a";
+        format = "<b>%s</b>\\n%b";
+        alignment = "left";
+        word_wrap = true;
+        ellipsize = "end";
+        stack_duplicates = true;
+        history_length = 30;
         timeout = 10;
-        separator_color = "frame";
+        separator_color = "#343944";
         show_indicators = false;
         icon_position = "left";
         min_icon_size = 32;
-        max_icon_size = 64;
+        max_icon_size = 32;
       };
       urgency_low = {
-        background = "#1e1e2eCC";
-        foreground = "#cdd6f4";
-        timeout = 5;
+        background = "#14151a";
+        foreground = "#969ca8";
+        timeout = 4;
       };
       urgency_normal = {
-        background = "#1e1e2eCC";
-        foreground = "#cdd6f4";
-        timeout = 8;
+        background = "#14151a";
+        foreground = "#eef0f4";
+        timeout = 6;
       };
       urgency_critical = {
-        background = "#f38ba8CC";
-        foreground = "#cdd6f4";
+        background = "#14151a";
+        foreground = "#eef0f4";
+        frame_color = "#f3a6a1";
         timeout = 0;
       };
     };
@@ -412,8 +426,10 @@ in
     };
   };
 
-  xdg.configFile."ags/app.tsx".source = ../ags/app.tsx;
-  xdg.configFile."ags/tsconfig.json".source = ../ags/tsconfig.json;
+  xdg.configFile."ags" = {
+    source = ../ags;
+    recursive = true;
+  };
 
   xdg.configFile."hypr/hyprlock.conf".text = ''
     general {

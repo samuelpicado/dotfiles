@@ -3,6 +3,34 @@
 {
   time.timeZone = "America/Costa_Rica";
   networking.networkmanager.enable = true;
+  # Evitar que redes locales de Docker intercepten los servidores DNS recibidos por DHCP.
+  networking.networkmanager.settings.connection."ipv4.routed-dns" = 1;
+  systemd.services.NetworkManager.reloadIfChanged = true;
+  programs.nm-applet.enable = true;
+  environment.systemPackages = [ pkgs.geteduroam ];
+  systemd.user.services.nm-applet.serviceConfig.Restart = "on-failure";
+  # HTTP permite detectar la redirección al login de UNA-WiFi-Sedes.
+  networking.networkmanager.settings.connectivity = {
+    enabled = true;
+    uri = "http://nmcheck.gnome.org/check_network_status.txt";
+    response = "NetworkManager is online";
+    interval = 30;
+  };
+  systemd.user.services.captive-portal = {
+    description = "Open captive network login in the default browser";
+    wantedBy = [ "graphical-session.target" ];
+    after = [ "graphical-session.target" ];
+    partOf = [ "graphical-session.target" ];
+    serviceConfig = {
+      ExecStart = lib.getExe (pkgs.writeShellApplication {
+        name = "captive-portal";
+        runtimeInputs = [ pkgs.networkmanager pkgs.xdg-utils pkgs.firefox ];
+        text = builtins.readFile ../scripts/captive-portal.sh;
+      });
+      Restart = "always";
+      RestartSec = 5;
+    };
+  };
   systemd.network.wait-online.enable = false;
   networking.extraHosts = ''
     127.0.0.1 presence.gog.com
