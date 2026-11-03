@@ -2,15 +2,23 @@
 
 let
   hyprglass = pkgs.callPackage ../pkgs/hyprglass.nix { mkHyprlandPlugin = pkgs.hyprlandPlugins.mkHyprlandPlugin; };
-  hyprspace = pkgs.callPackage ../pkgs/hyprspace.nix { };
+  cascade-overview = pkgs.callPackage ../pkgs/cascade-overview.nix { };
   polkitAgent = "${pkgs.kdePackages.polkit-kde-agent-1}/libexec/polkit-kde-authentication-agent-1";
-  ags-full = pkgs.ags.overrideAttrs (old: {
-    buildInputs = (old.buildInputs or []) ++ [
-      pkgs.astal.network pkgs.astal.bluetooth pkgs.astal.tray
-      pkgs.astal.wireplumber pkgs.astal.battery pkgs.astal.hyprland
+  agsPackages = inputs.ags.packages.${pkgs.stdenv.hostPlatform.system};
+  # AGS 2 needs the GJS bindings that Astal no longer exposes as a flake package.
+  astalGjs = import "${inputs.astal}/lang/gjs" {
+    inherit pkgs;
+    self = inputs.astal;
+  };
+  ags-full = agsPackages.default.override {
+    wrapGAppsHook = pkgs.wrapGAppsHook3;
+    astal-gjs = "${astalGjs}/share/astal/gjs";
+    extraPackages = [
+      agsPackages.network agsPackages.bluetooth agsPackages.tray
+      agsPackages.wireplumber agsPackages.battery agsPackages.hyprland
       pkgs.networkmanager
     ];
-  });
+  };
   display-switcher = pkgs.writeShellScript "display-switcher" ''
     H=${pkgs.hyprland}/bin/hyprctl
     JQ=${pkgs.jq}/bin/jq
@@ -176,6 +184,12 @@ EOF
     require("hyprland-gui")
     local mod = "SUPER"
 
+    local function cascade(action, argument)
+        if hl.plugin.cascade then
+            hl.plugin.cascade[action](argument or "")
+        end
+    end
+
     hl.monitor({
         output   = "",
         mode     = "preferred",
@@ -251,10 +265,7 @@ EOF
         },
     })
 
-    -- Gestures (GNOME-like: 3-finger horizontal swipe for workspaces)
-    hl.gesture({ fingers = 3, direction = "horizontal", action = "workspace" })
-    hl.gesture({ fingers = 4, direction = "up",          action = function() hl.exec_cmd("${window-switcher}") end })
-    hl.gesture({ fingers = 4, direction = "down",        action = function() hl.exec_cmd("foot") end })
+    -- Cascade captures three-finger navigation and four-finger overview gestures.
 
     hl.curve("easeOutQuint",     { type = "bezier", points = { {0.23, 1}, {0.32, 1} } })
     hl.curve("easeInOutCubic",   { type = "bezier", points = { {0.65, 0}, {0.35, 1} } })
@@ -276,14 +287,17 @@ EOF
     hl.env("HYPRLAND_NO_WARNINGS", "1")
 
 
-    -- Hyprspace registers these options when its plugin is loaded. The guard
+    -- Cascade registers these options when its plugin is loaded. The guard
     -- keeps the first config parse valid and applies them on the plugin reload.
-    if hl.plugin.overview then
+    if hl.plugin.cascade then
         hl.config({
             plugin = {
-                overview = {
-                    disableGestures = false,
+                cascade = {
+                    animate = true,
+                    gestures = true,
                     reverseSwipe = false,
+                    cardWidth = 480,
+                    rowHeight = 340,
                 },
             },
         })
@@ -316,7 +330,7 @@ EOF
         hl.exec_cmd("systemctl --user start xdg-desktop-portal-hyprland.service")
         -- HyprGlass registers its Lua API only after loading. Reload once both
         -- plugins are present so the guarded configuration above is applied.
-        hl.exec_cmd("hyprctl plugin load ${hyprglass}/lib/hyprglass.so && hyprctl plugin load ${hyprspace}/lib/libHyprspace.so && hyprctl reload")
+        hl.exec_cmd("hyprctl plugin load ${hyprglass}/lib/hyprglass.so && hyprctl plugin load ${cascade-overview}/lib/libHyprspace.so && hyprctl reload")
         hl.exec_cmd("systemctl --user start awww.service")
         hl.exec_cmd("systemctl --user start wallpaper-cycle.timer")
         hl.exec_cmd("systemctl --user start wallpaper-cycle.service")
@@ -349,7 +363,7 @@ EOF
     hl.bind(mod .. " + E",               hl.dsp.exec_cmd("thunar"))
     hl.bind(mod .. " + W",               hl.dsp.exec_cmd("firefox"))
     hl.bind(mod .. " + SHIFT + W",       hl.dsp.exec_cmd("firefox --private-window"))
-    hl.bind(mod .. " + Tab",             hl.dsp.exec_cmd("nwg-drawer"))
+    hl.bind(mod .. " + Tab",             function() cascade("toggle") end)
     hl.bind(mod .. " + D",               hl.dsp.exec_cmd("nwg-drawer"))
     hl.bind(mod .. " + L",               hl.dsp.exec_cmd("hyprlock"))
     hl.bind(mod .. " + SHIFT + S",       hl.dsp.exec_cmd("grim -g \"$(slurp)\" - | wl-copy && notify-send Screenshot 'Copied to clipboard'"))
@@ -394,33 +408,28 @@ EOF
     hl.bind(mod .. " + SHIFT + up",      hl.dsp.window.move({ direction = "up" }))
     hl.bind(mod .. " + SHIFT + down",    hl.dsp.window.move({ direction = "down" }))
 
-    -- Workspace switching
-    hl.bind(mod .. " + 1", hl.dsp.focus({ workspace = 1 }))
-    hl.bind(mod .. " + 2", hl.dsp.focus({ workspace = 2 }))
-    hl.bind(mod .. " + 3", hl.dsp.focus({ workspace = 3 }))
-    hl.bind(mod .. " + 4", hl.dsp.focus({ workspace = 4 }))
-    hl.bind(mod .. " + 5", hl.dsp.focus({ workspace = 5 }))
-    hl.bind(mod .. " + 6", hl.dsp.focus({ workspace = 6 }))
-    hl.bind(mod .. " + 7", hl.dsp.focus({ workspace = 7 }))
-    hl.bind(mod .. " + 8", hl.dsp.focus({ workspace = 8 }))
-    hl.bind(mod .. " + 9", hl.dsp.focus({ workspace = 9 }))
-    hl.bind(mod .. " + 0", hl.dsp.focus({ workspace = 10 }))
+    -- Desktop ordinals belong to the selected group; IDs are allocated by Cascade.
+    for ordinal = 1, 10 do
+        local key = ordinal % 10
+        hl.bind(mod .. " + " .. key, function()
+            cascade("command", "desktop-select " .. ordinal)
+        end)
+        hl.bind(mod .. " + SHIFT + " .. key, function()
+            cascade("command", "window-to " .. ordinal)
+        end)
+    end
 
-    -- Move windows between workspaces
-    hl.bind(mod .. " + SHIFT + 1", hl.dsp.window.move({ workspace = 1 }))
-    hl.bind(mod .. " + SHIFT + 2", hl.dsp.window.move({ workspace = 2 }))
-    hl.bind(mod .. " + SHIFT + 3", hl.dsp.window.move({ workspace = 3 }))
-    hl.bind(mod .. " + SHIFT + 4", hl.dsp.window.move({ workspace = 4 }))
-    hl.bind(mod .. " + SHIFT + 5", hl.dsp.window.move({ workspace = 5 }))
-    hl.bind(mod .. " + SHIFT + 6", hl.dsp.window.move({ workspace = 6 }))
-    hl.bind(mod .. " + SHIFT + 7", hl.dsp.window.move({ workspace = 7 }))
-    hl.bind(mod .. " + SHIFT + 8", hl.dsp.window.move({ workspace = 8 }))
-    hl.bind(mod .. " + SHIFT + 9", hl.dsp.window.move({ workspace = 9 }))
-    hl.bind(mod .. " + SHIFT + 0", hl.dsp.window.move({ workspace = 10 }))
+    for _, direction in ipairs({ "left", "right", "up", "down" }) do
+        hl.bind(mod .. " + CTRL + " .. direction, function()
+            cascade("navigate", direction)
+        end)
+        hl.bind(mod .. " + CTRL + SHIFT + " .. direction, function()
+            cascade("navigate", "move-" .. direction)
+        end)
+    end
 
-    -- Scroll through workspaces (mouse wheel on desktop)
-    hl.bind(mod .. " + mouse_down",      hl.dsp.focus({ workspace = "e+1" }))
-    hl.bind(mod .. " + mouse_up",        hl.dsp.focus({ workspace = "e-1" }))
+    hl.bind(mod .. " + mouse_down", function() cascade("navigate", "right") end)
+    hl.bind(mod .. " + mouse_up",   function() cascade("navigate", "left") end)
 
     -- Mouse bindings (drag/resize windows)
     hl.bind(mod .. " + mouse:272", hl.dsp.window.drag(),   { mouse = true })
@@ -444,9 +453,8 @@ EOF
     hl.bind(mod .. " + SHIFT + Print",  hl.dsp.exec_cmd("wf-recorder -g \"$(slurp)\" -f ~/Videos/recording-$(date +%Y%m%d-%H%M%S).mp4 --no-audio && notify-send Recording 'Started (SUPER+ALT+Print to stop)'"))
     hl.bind(mod .. " + ALT + Print",    hl.dsp.exec_cmd("killall -INT wf-recorder; notify-send Recording 'Stopped'"))
 
-    -- Move window to next/prev workspace with SUPER+SHIFT+scroll
-    hl.bind(mod .. " + SHIFT + mouse_down", hl.dsp.window.move({ workspace = "e+1" }))
-    hl.bind(mod .. " + SHIFT + mouse_up",   hl.dsp.window.move({ workspace = "e-1" }))
+    hl.bind(mod .. " + SHIFT + mouse_down", function() cascade("navigate", "move-right") end)
+    hl.bind(mod .. " + SHIFT + mouse_up",   function() cascade("navigate", "move-left") end)
   '';
 
   hyprland-session = pkgs.writeShellScript "hyprland-session" ''
@@ -483,6 +491,9 @@ in
     };
   };
 
+  # Rebuilding the session script must not terminate the running desktop.
+  systemd.services.greetd.restartIfChanged = false;
+
   security.pam.services.greetd.enableGnomeKeyring = true;
 
   xdg.portal = {
@@ -512,7 +523,7 @@ in
 
   environment.systemPackages = with pkgs; [
     hyprglass
-    hyprspace
+    cascade-overview
     fuzzel
     jq
     hyprlock
@@ -538,9 +549,9 @@ in
     awww
     inputs.hyprmod.packages.${pkgs.stdenv.hostPlatform.system}.default
     ags-full
-    pkgs.astal.network
-    pkgs.astal.bluetooth
-    pkgs.astal.tray
+    agsPackages.network
+    agsPackages.bluetooth
+    agsPackages.tray
   ];
 
   programs.thunar = {

@@ -1,8 +1,9 @@
 import { Astal, Gtk, Gdk } from "astal/gtk3"
 import GLib from "gi://GLib"
 import Cairo from "cairo"
-import { execAsync } from "astal/process"
 import { audio, batteryDevice, bluetooth, layout, switchLayout } from "./state"
+import { selectedModule, observe } from "./motion"
+import { notificationHistory, notificationPending, notificationsPaused, notificationsReady, markNotificationsRead, setNotificationsPaused } from "./notifications"
 
 export function launch(command: string) { GLib.spawn_command_line_async(command) }
 
@@ -28,21 +29,21 @@ export function action(label: string, callback: () => void) {
   return button
 }
 
-let activePanel: Astal.Window | null = null
-let activeButton: Gtk.Button | null = null
-let closeActivePanel: (() => void) | null = null
+type PanelBuilder = (close: () => void) => Gtk.Widget
+let activePanel: {
+  window: Astal.Window
+  toggle: (button: Gtk.Button, build: PanelBuilder) => Astal.Window | null
+  close: () => void
+} | null = null
 
 export function dismissPanel() {
-  if (!closeActivePanel) return false
-  closeActivePanel()
+  if (!activePanel) return false
+  activePanel.close()
   return true
 }
 
-export function togglePanel(button: Gtk.Button, build: (close: () => void) => Gtk.Widget) {
-  if (activePanel) {
-    if (activeButton === button) { dismissPanel(); return null }
-    activePanel.destroy()
-  }
+export function togglePanel(button: Gtk.Button, build: PanelBuilder) {
+  if (activePanel) return activePanel.toggle(button, build)
   const parent = button.get_toplevel() as Gtk.Window
   const popup = new Astal.Window({
     application: parent.get_application(),
@@ -67,28 +68,35 @@ export function togglePanel(button: Gtk.Button, build: (close: () => void) => Gt
     })
     popup.input_shape_combine_region(region)
   })
-  const duration = Gtk.Settings.get_default()?.gtk_enable_animations ? 180 : 0
+  const duration = Gtk.Settings.get_default()?.gtk_enable_animations ? 200 : 0
   const reveal = new Gtk.Revealer({
     transition_type: Gtk.RevealerTransitionType.SLIDE_DOWN,
     transition_duration: duration,
     halign: Gtk.Align.CENTER, valign: Gtk.Align.START, margin_top: 36,
   })
-  let closing = false
-  let closeSource = 0
-  const close = () => {
-    if (closing) return
-    closing = true
-    reveal.reveal_child = false
-    if (!duration) popup.destroy()
-    else closeSource = GLib.timeout_add(GLib.PRIORITY_DEFAULT, duration, () => {
-      closeSource = 0
-      popup.destroy()
-      return GLib.SOURCE_REMOVE
-    })
+  const stack = new Gtk.Stack({
+    hhomogeneous: false, vhomogeneous: false, interpolate_size: true,
+    transition_type: Gtk.StackTransitionType.CROSSFADE, transition_duration: duration,
+  })
+  const prune = () => {
+    if (stack.transition_running) return
+    for (const child of stack.get_children()) if (child !== stack.visible_child) child.destroy()
   }
+  stack.connect("notify::transition-running", prune)
+  let activeButton: Gtk.Button | null = null
+  const close = () => {
+    if (!reveal.reveal_child) return
+    surface.sensitive = false
+    activeButton?.get_style_context().remove_class("module-open")
+    selectedModule.set(null)
+    reveal.reveal_child = false
+  }
+  reveal.connect("notify::child-revealed", () => {
+    if (!reveal.reveal_child && !reveal.child_revealed) popup.destroy()
+  })
   const surface = new Gtk.EventBox()
   surface.get_style_context().add_class("island-panel")
-  surface.add(build(close))
+  surface.add(stack)
   surface.connect("button-press-event", () => true)
   reveal.add(surface)
   const backdrop = new Gtk.EventBox({ visible_window: false })
@@ -100,22 +108,81 @@ export function togglePanel(button: Gtk.Button, build: (close: () => void) => Gt
     close()
     return true
   })
-  activePanel = popup
-  activeButton = button
-  closeActivePanel = close
-  button.get_style_context().add_class("module-open")
+  const toggle = (nextButton: Gtk.Button, nextBuild: PanelBuilder) => {
+    if (activeButton === nextButton && reveal.reveal_child) { close(); return null }
+    if (activeButton !== nextButton) {
+      activeButton?.get_style_context().remove_class("module-open")
+      const content = nextBuild(close)
+      stack.add(content)
+      content.show_all()
+      stack.visible_child = content
+      activeButton = nextButton
+    }
+    surface.sensitive = true
+    activeButton.get_style_context().add_class("module-open")
+    selectedModule.set(activeButton)
+    popup.show_all()
+    reveal.reveal_child = true
+    prune()
+    return popup
+  }
+  activePanel = { window: popup, toggle, close }
+  const parentDestroyed = parent.connect("destroy", () => popup.destroy())
   popup.connect("destroy", () => {
-    if (closeSource) GLib.source_remove(closeSource)
-    button.get_style_context().remove_class("module-open")
-    if (activePanel === popup) { activePanel = null; activeButton = null; closeActivePanel = null }
+    parent.disconnect(parentDestroyed)
+    activeButton?.get_style_context().remove_class("module-open")
+    selectedModule.set(null)
+    if (activePanel?.window === popup) activePanel = null
   })
-  popup.show_all()
-  reveal.reveal_child = true
-  return popup
+  return toggle(button, build)
+}
+
+function notificationView() {
+  const box = new Gtk.Box({ orientation: Gtk.Orientation.VERTICAL, spacing: 10 })
+  const status = new Gtk.Label({ xalign: 0 })
+  status.get_style_context().add_class("muted")
+  const rows = new Gtk.Box({ orientation: Gtk.Orientation.VERTICAL, spacing: 8 })
+  const scroll = new Gtk.ScrolledWindow({ max_content_height: 260, propagate_natural_height: true, hscrollbar_policy: Gtk.PolicyType.NEVER })
+  scroll.add(rows)
+  const updateStatus = () => {
+    status.label = `${notificationHistory.get().length} en historial · ${notificationPending.get()} pendientes`
+  }
+  observe(status, notificationPending, updateStatus)
+  const render = () => {
+    rows.get_children().forEach(child => child.destroy())
+    const notices = notificationHistory.get()
+    if (!notices.length) {
+      const empty = new Gtk.Label({ label: notificationsReady.get() ? "No hay notificaciones" : "Notificaciones no disponibles", margin_top: 20, margin_bottom: 20 })
+      empty.get_style_context().add_class("muted")
+      rows.add(empty)
+    }
+    for (const notice of notices) {
+      const card = new Gtk.Box({ orientation: Gtk.Orientation.VERTICAL, spacing: 4, tooltip_text: notice.summary })
+      card.get_style_context().add_class("notification-card")
+      if (notice.critical) card.get_style_context().add_class("critical")
+      const app = new Gtk.Label({ label: notice.app, xalign: 0, ellipsize: 3, max_width_chars: 36 })
+      app.get_style_context().add_class("notification-app")
+      const title = new Gtk.Label({ label: notice.summary, xalign: 0, wrap: true, wrap_mode: 2, ellipsize: 3, lines: 2, max_width_chars: 38 })
+      title.get_style_context().add_class("notification-title")
+      card.add(app)
+      card.add(title)
+      if (notice.body) card.add(new Gtk.Label({ label: notice.body, xalign: 0, wrap: true, wrap_mode: 2, ellipsize: 3, lines: 3, max_width_chars: 38 }))
+      rows.add(card)
+    }
+    rows.show_all()
+    updateStatus()
+    if (box.get_mapped() && notificationsReady.get()) markNotificationsRead()
+  }
+  observe(box, notificationHistory, render)
+  observe(box, notificationsReady, render)
+  box.connect("map", markNotificationsRead)
+  box.add(status)
+  box.add(scroll)
+  return box
 }
 
 export function calendarPanel() {
-  const box = column("Calendario")
+  const box = column("Calendario y avisos")
   const date = new Gtk.Label({ label: GLib.DateTime.new_now_local().format("%A, %e %B") ?? "", xalign: 0 })
   date.get_style_context().add_class("muted")
   box.add(date)
@@ -135,20 +202,30 @@ export function calendarPanel() {
   }
   calendar.connect("month-changed", markToday)
   today()
-  box.add(calendar)
-  box.add(action("Hoy", today))
+  const dates = new Gtk.Box({ orientation: Gtk.Orientation.VERTICAL, spacing: 12 })
+  dates.add(calendar)
+  dates.add(action("Hoy", today))
+  const pages = new Gtk.Stack({ hhomogeneous: true, vhomogeneous: false, interpolate_size: true, transition_type: Gtk.StackTransitionType.CROSSFADE, transition_duration: 180 })
+  pages.add_titled(dates, "calendar", "Calendario")
+  pages.add_titled(notificationView(), "notifications", "Notificaciones")
+  const tabs = new Gtk.StackSwitcher({ stack: pages, halign: Gtk.Align.CENTER })
+  tabs.get_style_context().add_class("panel-tabs")
+  box.add(tabs)
+  box.add(pages)
   const quiet = new Gtk.CheckButton({ label: "No molestar", sensitive: false })
+  let syncing = false
   let alive = true
-  let syncing = true
-  box.connect("destroy", () => { alive = false })
-  execAsync(["dunstctl", "is-paused"]).then(value => {
-    if (!alive) return
-    quiet.active = value.trim() === "true"
+  quiet.connect("destroy", () => { alive = false })
+  const syncQuiet = () => {
+    syncing = true
+    quiet.active = notificationsPaused.get()
+    quiet.sensitive = notificationsReady.get()
     syncing = false
-    quiet.sensitive = true
-  }).catch(error => { syncing = false; console.error(error) })
+  }
+  observe(quiet, notificationsPaused, syncQuiet)
+  observe(quiet, notificationsReady, syncQuiet)
   quiet.connect("toggled", () => {
-    if (!syncing) execAsync(["dunstctl", "set-paused", String(quiet.active)]).catch(console.error)
+    if (!syncing) setNotificationsPaused(quiet.active).catch(error => { console.error(error); if (alive) syncQuiet() })
   })
   box.add(quiet)
   return box

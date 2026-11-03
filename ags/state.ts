@@ -12,8 +12,10 @@ export const audio = Wp.get_default().audio
 export const batteryDevice = Battery.get_default()
 export const hyprland = Hyprland.get_default()
 export const clock = Variable("")
-export const volume = Variable("")
+export const volumeIcon = Variable("")
+export const volumeLevel = Variable("0")
 export const wifiIcon = Variable("")
+export const wifiDescription = Variable("Wi-Fi")
 export const btIcon = Variable("")
 export const battery = Variable("")
 export const fullscreen = Variable(false)
@@ -37,7 +39,8 @@ function trackSpeaker() {
   previousSpeaker = audio.default_speaker
   const update = () => {
     const speaker = audio.default_speaker
-    volume.set(!speaker ? " 0" : speaker.mute ? " M" : ` ${Math.round(Math.min(speaker.volume, 1) * 100)}`)
+    volumeIcon.set(!speaker || speaker.mute ? "" : "")
+    volumeLevel.set(!speaker ? "0" : speaker.mute ? "M" : String(Math.round(Math.max(0, Math.min(speaker.volume, 1)) * 100)))
   }
   speakerSignal = previousSpeaker?.connect("notify", update) ?? 0
   update()
@@ -50,9 +53,29 @@ export function changeVolume(delta: number) {
   if (speaker) speaker.volume = Math.max(0, Math.min(1, speaker.volume + delta / 100))
 }
 
-const updateWifi = () => wifiIcon.set(network.wifi ? "" : "")
-network.connect("notify::wifi", updateWifi)
-updateWifi()
+export function describeWifi(wifi: Network.Wifi | null) {
+  if (!wifi) return ["", "Sin adaptador Wi-Fi"]
+  if (!wifi.enabled) return ["", "Wi-Fi desactivado"]
+  if (wifi.state >= Network.DeviceState.PREPARE && wifi.state <= Network.DeviceState.SECONDARIES)
+    return ["", wifi.ssid ? `Conectando a ${wifi.ssid}…` : "Conectando a Wi-Fi…"]
+  if (wifi.state === Network.DeviceState.ACTIVATED && wifi.ssid) return ["", wifi.ssid]
+  return ["", "Wi-Fi sin conexión"]
+}
+let previousWifi = network.wifi
+let wifiSignal = 0
+function trackWifi() {
+  if (wifiSignal && previousWifi) previousWifi.disconnect(wifiSignal)
+  previousWifi = network.wifi
+  const update = () => {
+    const [icon, description] = describeWifi(previousWifi)
+    wifiIcon.set(icon)
+    wifiDescription.set(description)
+  }
+  wifiSignal = previousWifi?.connect("notify", update) ?? 0
+  update()
+}
+network.connect("notify::wifi", trackWifi)
+trackWifi()
 
 const deviceSignals = new Map<any, number>()
 function updateBluetooth() {

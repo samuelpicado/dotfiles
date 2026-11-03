@@ -2,6 +2,8 @@
 
 Personal NixOS configuration using flakes and home-manager.
 
+El escritorio usa [Cascade Overview](pkgs/cascade-overview/README.md): grupos verticales, escritorios horizontales, miniaturas reales y organización persistente.
+
 ## Structure
 
 ```

@@ -16,6 +16,7 @@
   home.packages = with pkgs; [
     fastfetch
     opencode
+    codex
     bat
     eza
     fd
@@ -29,7 +30,6 @@
     # Free Pascal
     fpc
     lazarus-qt5
-    (pkgs.callPackage ./pkgs/codex.nix { })
   ];
 
   # --- Programs ---

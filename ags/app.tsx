@@ -1,8 +1,26 @@
 import App from "astal/gtk3/app"
 import { Astal, Gtk, Gdk } from "astal/gtk3"
 import { wifiPanel } from "./wifi"
-import { clock, volume, wifiIcon, btIcon, battery, fullscreen, layout, network, batteryDevice, changeVolume } from "./state"
+import { clock, volumeIcon, volumeLevel, wifiIcon, wifiDescription, btIcon, bluetooth, battery, fullscreen, layout, batteryDevice, changeVolume } from "./state"
 import { togglePanel, dismissPanel, calendarPanel, audioPanel, bluetoothPanel, batteryPanel, keyboardPanel, powerPanel, watch } from "./controls"
+import { activeIndicator, smoothLabel, observe } from "./motion"
+import { notificationPending, notificationsPaused } from "./notifications"
+
+function dateContent() {
+  const overlay = new Gtk.Overlay()
+  const label = new Gtk.Label()
+  observe(label, clock, () => { label.label = clock.get() })
+  overlay.add(label)
+  const dot = new Gtk.Box({ width_request: 5, height_request: 5 })
+  dot.get_style_context().add_class("notification-dot")
+  const reveal = new Gtk.Revealer({ transition_type: Gtk.RevealerTransitionType.CROSSFADE, transition_duration: 180, halign: Gtk.Align.END, valign: Gtk.Align.START, margin_top: 3, margin_end: 3 })
+  reveal.add(dot)
+  observe(reveal, notificationPending, () => { reveal.reveal_child = notificationPending.get() > 0 })
+  overlay.add_overlay(reveal)
+  overlay.set_overlay_pass_through(reveal, true)
+  overlay.show_all()
+  return overlay
+}
 
 App.start({
   css: `
@@ -36,16 +54,21 @@ App.start({
       background-color: rgba(210, 222, 245, 0.12);
       color: #ffffff;
     }
-    .island-btn:active, .island-btn.module-open {
+    .island-btn:active {
       background-color: rgba(159, 196, 255, 0.19);
       color: @island_accent;
       box-shadow: inset 0 0 0 1px rgba(159, 196, 255, 0.12);
+      transition-duration: 70ms;
     }
+    .island-btn.module-open, .island-btn.module-open:hover { color: @island_accent; background: transparent; box-shadow: none; }
     .island-btn:focus { outline: 1px solid @island_accent; }
     .island-btn.date-btn { padding: 0; min-height: 0; }
     .network-menu { background: transparent; padding: 0; box-shadow: none; }
     .network-menu > menuitem { padding: 8px 12px; border-radius: 9px; }
     .island-btn.battery-low { color: #f3bc9b; }
+    .island-btn.battery-charging, .island-btn.connection-busy { color: @island_accent; }
+    .island-btn.connection-off { color: @island_muted; }
+    .notification-dot { background: @island_accent; border-radius: 9999px; }
     .island-panel, menu {
       background: rgba(20, 21, 26, 0.97);
       color: @island_text;
@@ -59,6 +82,13 @@ App.start({
     .panel-title { font-size: 15px; font-weight: 600; }
     .panel-value { font-size: 30px; font-weight: 600; }
     .muted { color: @island_muted; }
+    .panel-tabs button { background: rgba(210, 222, 245, 0.05); color: @island_muted; border: none; border-radius: 9px; padding: 7px 10px; box-shadow: none; transition: background-color 180ms ease-in-out, color 180ms ease-in-out; }
+    .panel-tabs button:checked { background: rgba(159, 196, 255, 0.16); color: @island_text; }
+    .panel-tabs button:hover { color: @island_text; }
+    .notification-card { background: rgba(210, 222, 245, 0.04); border: 1px solid rgba(210, 222, 245, 0.08); border-radius: 11px; padding: 10px; }
+    .notification-card.critical { border-color: rgba(243, 166, 161, 0.55); }
+    .notification-title { font-weight: 600; }
+    .notification-app { color: @island_muted; font-size: 11px; }
     menu {
       padding: 6px;
       -gtk-outline-top-left-radius: 16px;
@@ -133,31 +163,54 @@ App.start({
           transitionDuration={Gtk.Settings.get_default()?.gtk_enable_animations ? 200 : 0}
           valign={Gtk.Align.START}
         >
-          <box className="island-pill" halign={Gtk.Align.CENTER} spacing={0}>
+          <box className="island-pill" halign={Gtk.Align.CENTER} spacing={0} setup={activeIndicator}>
             <box widthRequest={94} spacing={0}>
             <button
               className="island-btn"
               widthRequest={24}
               tooltipText="Redes y conexiones"
               setup={self => {
-                const update = () => { self.tooltip_text = network.wifi?.ssid || "Redes y conexiones" }
-                watch(self, network.wifi, "notify::ssid", update)
-                update()
+                const update = () => {
+                  self.tooltip_text = wifiDescription.get()
+                  self.get_accessible().set_name(`Redes: ${self.tooltip_text}`)
+                  const context = self.get_style_context()
+                  if (["", ""].includes(wifiIcon.get())) context.add_class("connection-off")
+                  else context.remove_class("connection-off")
+                  if (wifiIcon.get() === "") context.add_class("connection-busy")
+                  else context.remove_class("connection-busy")
+                }
+                observe(self, wifiDescription, update)
+                observe(self, wifiIcon, update)
               }}
               onClicked={self => togglePanel(self, wifiPanel)}
-            ><label label={wifiIcon()} /></button>
+            >{smoothLabel(wifiIcon, 10)}</button>
             <button
               className="island-btn"
               tooltipText="Bluetooth"
               widthRequest={24}
               onClicked={self => togglePanel(self, bluetoothPanel)}
-            ><label label={btIcon()} /></button>
+              setup={self => {
+                const update = () => {
+                  self.tooltip_text = bluetooth.is_powered ? "Bluetooth activado" : "Bluetooth desactivado"
+                  self.get_accessible().set_name(self.tooltip_text)
+                  const context = self.get_style_context()
+                  if (bluetooth.is_powered) context.remove_class("connection-off")
+                  else context.add_class("connection-off")
+                }
+                watch(self, bluetooth, "notify::is-powered", update)
+                update()
+              }}
+            >{smoothLabel(btIcon, 10)}</button>
             <button
               className="island-btn"
               tooltipText="Sonido · desplaza para ajustar"
               widthRequest={46}
               onClicked={self => togglePanel(self, audioPanel)}
               setup={self => {
+                observe(self, volumeLevel, () => {
+                  self.tooltip_text = `Sonido: ${volumeLevel.get() === "M" ? "silenciado" : `${volumeLevel.get()}%`} · desplaza para ajustar`
+                  self.get_accessible().set_name(self.tooltip_text)
+                })
                 self.add_events(Gdk.EventMask.SMOOTH_SCROLL_MASK | Gdk.EventMask.SCROLL_MASK)
                 self.connect("scroll-event", (_self, event: Gdk.EventScroll) => {
                   const direction = event.get_scroll_direction()[1]
@@ -170,14 +223,22 @@ App.start({
                   return true
                 })
               }}
-            ><label label={volume()} /></button>
+            ><box spacing={3}>{smoothLabel(volumeIcon, 9)}{smoothLabel(volumeLevel, 22, 1)}</box></button>
             </box>
             <button
               className="island-btn date-btn"
               tooltipText="Calendario y notificaciones"
               widthRequest={141}
               onClicked={self => togglePanel(self, calendarPanel)}
-            ><label label={clock()} /></button>
+              setup={self => {
+                const update = () => {
+                  self.tooltip_text = `Calendario · ${notificationPending.get()} notificaciones pendientes${notificationsPaused.get() ? " · No molestar" : ""}`
+                  self.get_accessible().set_name(self.tooltip_text)
+                }
+                observe(self, notificationPending, update)
+                observe(self, notificationsPaused, update)
+              }}
+            >{dateContent()}</button>
             <box widthRequest={94} spacing={0}>
             <button
               className="island-btn"
@@ -190,22 +251,28 @@ App.start({
                   if (batteryDevice?.is_present && !batteryDevice.charging && batteryDevice.percentage <= 0.2)
                     context.add_class("battery-low")
                   else context.remove_class("battery-low")
+                  if (batteryDevice?.charging) context.add_class("battery-charging")
+                  else context.remove_class("battery-charging")
+                  self.tooltip_text = `Batería: ${battery.get()} · ${batteryDevice?.charging ? "conectada a la corriente" : "usando batería"}`
+                  self.get_accessible().set_name(self.tooltip_text)
                 }
                 watch(self, batteryDevice, "notify", update)
                 update()
               }}
-            ><label label={battery()} /></button>
+            >{smoothLabel(battery, 30, 1)}</button>
             <button
               className="island-btn"
               tooltipText="Distribución del teclado"
               widthRequest={24}
               onClicked={self => togglePanel(self, keyboardPanel)}
-            ><label label={layout()} /></button>
+              setup={self => observe(self, layout, () => { self.get_accessible().set_name(`Distribución del teclado: ${layout.get()}`) })}
+            >{smoothLabel(layout, 14)}</button>
             <button
               className="island-btn"
               tooltipText="Sesión y energía"
               widthRequest={24}
               onClicked={self => togglePanel(self, powerPanel)}
+              setup={self => self.get_accessible().set_name("Sesión y energía")}
             ><label label="" /></button>
             </box>
           </box>
