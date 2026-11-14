@@ -22,8 +22,18 @@ inline int swipeAxis(double x, double y) {
     if (std::max(std::abs(x), std::abs(y)) < 8) return 0;
     return std::abs(x) > std::abs(y) ? 1 : 2;
 }
-inline double approach(double value, double target, double dt, bool animate) {
-    if (!animate || std::abs(target - value) < .001) return target;
-    return value + (target - value) * (1 - std::exp(-18 * std::clamp(dt, 0.0, .1)));
-}
+struct Motion {
+    double value = 0, target = 0, velocity = 0;
+    void tick(double dt, bool animate) {
+        if (!animate || (std::abs(target - value) < .001 && std::abs(velocity) < .01)) {
+            value = target;
+            velocity = 0;
+            return;
+        }
+        const double step = std::clamp(dt, 0., .1), decay = std::exp(-22 * step);
+        const double offset = value - target, momentum = velocity + 22 * offset;
+        value = target + (offset + momentum * step) * decay;
+        velocity = (velocity - 22 * momentum * step) * decay;
+    }
+};
 }

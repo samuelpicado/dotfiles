@@ -68,6 +68,19 @@ void CCascadeOverview::drop(const Hit& from, const Hit& to) {
     save();
 }
 
+CBox CCascadeOverview::dragBox(const Hit& source, Vector2D coordinates) {
+    const auto owner = getOwner();
+    if (!owner) return {};
+    const double width = owner->m_transformedSize.x / owner->m_scale, height = owner->m_transformedSize.y / owner->m_scale;
+    const auto window = source.window.lock();
+    const bool desktop = source.kind == Kind::Desktop;
+    const auto size = window ? window->size(Desktop::View::IGeometric::GEOMETRIC_CURRENT) : Vector2D{width, height};
+    const auto fitted = Cascade::fit(0, 0, std::min(240., width - 32), std::min(160., height - 64), size.x, size.y);
+    const double w = fitted.w + (desktop ? 0 : 12), h = fitted.h + (desktop ? 0 : 32);
+    return {std::clamp(coordinates.x - owner->m_position.x + 18, 8., std::max(8., width - w - 8)),
+            std::clamp(coordinates.y - owner->m_position.y + 20, 8., std::max(8., height - h - 8)), w, h};
+}
+
 bool CCascadeOverview::buttonEvent(bool pressed, Vector2D coordinates, uint32_t button) {
     pointer = coordinates;
     if (button != BTN_LEFT) return true;
@@ -76,9 +89,14 @@ bool CCascadeOverview::buttonEvent(bool pressed, Vector2D coordinates, uint32_t 
         pressedHit = hit ? std::optional<Hit>(*hit) : std::nullopt;
         pressPosition = coordinates;
         dragging = false;
+        dragPreview.reset();
     } else {
         const auto from = pressedHit;
         const bool wasDragging = dragging;
+        if (dragPreview) {
+            dragPreview->box = dragBox(dragPreview->source, coordinates);
+            dragPreview->settling = true;
+        }
         pressedHit.reset();
         dragging = false;
         if (from) {
@@ -94,11 +112,19 @@ bool CCascadeOverview::buttonEvent(bool pressed, Vector2D coordinates, uint32_t 
 }
 
 void CCascadeOverview::motionEvent(Vector2D coordinates) {
+    const bool moved = pointer != coordinates;
     pointer = coordinates;
+    if (active && moved) {
+        if (const auto owner = getOwner()) { g_pHyprRenderer->damageMonitor(owner); owner->scheduleFrame(); }
+    }
     if (!active || !pressedHit) return;
     const auto kind = pressedHit->kind;
-    if ((kind == Kind::Window || kind == Kind::Desktop) && (coordinates - pressPosition).size() > 7) dragging = true;
+    if (!dragging && (kind == Kind::Window || kind == Kind::Desktop) && (coordinates - pressPosition).size() > 7) {
+        dragging = true;
+        dragPreview = DragPreview{.source = *pressedHit, .box = dragBox(*pressedHit, coordinates)};
+    }
     if (dragging) {
+        if (dragPreview) dragPreview->box = dragBox(dragPreview->source, coordinates);
         const auto owner = getOwner();
         if (!owner) return;
         const auto now = std::chrono::steady_clock::now();
@@ -292,8 +318,14 @@ bool CCascadeOverview::updateSwipe(const IPointer::SSwipeUpdateEvent& event) {
         else if (const auto owner = getOwner()) { g_pHyprRenderer->damageMonitor(owner); owner->scheduleFrame(); }
     }
     if (active && swipeFingers == 3) {
-        if (swipeAxis == 1) columns[model.activeGroup].value = columns[model.activeGroup].target - swipeDelta.x / 300;
-        if (swipeAxis == 2) row.value = row.target - std::clamp(swipeDelta.y / 240, -.95, .95);
+        if (swipeAxis == 1) {
+            columns[model.activeGroup].value = columns[model.activeGroup].target - swipeDelta.x / 300;
+            columns[model.activeGroup].velocity = 0;
+        }
+        if (swipeAxis == 2) {
+            row.value = row.target - std::clamp(swipeDelta.y / 240, -.95, .95);
+            row.velocity = 0;
+        }
         if (const auto owner = getOwner()) { g_pHyprRenderer->damageMonitor(owner); owner->scheduleFrame(); }
     }
     return true;

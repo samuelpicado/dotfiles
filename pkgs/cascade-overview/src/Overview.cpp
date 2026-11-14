@@ -31,10 +31,6 @@ std::string json(const std::string& value) {
 }
 }
 
-void CCascadeOverview::Motion::tick(double dt, bool animate) {
-    value = Cascade::approach(value, target, dt, animate);
-}
-
 CCascadeOverview::CCascadeOverview(int64_t owner) : ownerID(owner) {
     const char* state = std::getenv("XDG_STATE_HOME");
     const char* home = std::getenv("HOME");
@@ -126,33 +122,62 @@ void CCascadeOverview::sync() {
 }
 
 void CCascadeOverview::targets(bool warp) {
+    bool moving = reveal.value != reveal.target || row.value != row.target;
+    for (const auto& [id, column] : columns) moving |= column.value != column.target;
+    for (const auto& [id, group] : groupRows) moving |= group.value != group.target;
+    for (const auto& [id, card] : cards) moving |= card.x.value != card.x.target || card.y.value != card.y.target;
+    if (!moving) lastFrame = std::chrono::steady_clock::now();
     cascadeRefreshEmptyDesktops();
     for (size_t i = 0; i < model.groups.size(); ++i) {
         const auto& group = model.groups[i];
+        auto [position, added] = groupRows.try_emplace(group.id, Cascade::Motion{double(i), double(i)});
+        position->second.target = i;
+        if (warp) position->second = {double(i), double(i)};
         if (group.id == model.activeGroup) row.target = i;
         const auto selected = std::find(group.desktops.begin(), group.desktops.end(), group.selected);
         columns[group.id].target = selected == group.desktops.end() ? 0 : selected - group.desktops.begin();
-        if (warp) columns[group.id].value = columns[group.id].target;
+        if (warp) columns[group.id] = {columns[group.id].target, columns[group.id].target};
     }
-    if (warp) row.value = row.target;
+    for (size_t y = 0; y < model.groups.size(); ++y) {
+        const auto& group = model.groups[y];
+        for (size_t x = 0; x < group.desktops.size(); ++x) {
+            auto [it, added] = cards.try_emplace(group.desktops[x]);
+            auto& card = it->second;
+            if (added) card = {{double(x), double(x)}, {double(y), double(y)}, group.id};
+            if (card.group != group.id) card.x.value += columns[group.id].value - columns[card.group].value;
+            card.group = group.id;
+            card.x.target = x;
+            card.y.target = y;
+            if (warp) { card.x = {double(x), double(x)}; card.y = {double(y), double(y)}; }
+        }
+    }
+    std::erase_if(cards, [&](const auto& entry) { return !model.groupFor(entry.first); });
+    std::erase_if(columns, [&](const auto& entry) { return !model.group(entry.first); });
+    std::erase_if(groupRows, [&](const auto& entry) { return !model.group(entry.first); });
+    if (warp) { row.value = row.target; row.velocity = 0; }
     if (const auto owner = getOwner()) { g_pHyprRenderer->damageMonitor(owner); owner->scheduleFrame(); }
 }
 
 void CCascadeOverview::refreshEmptyDesktop() {
     const auto owner = getOwner();
+    if (active && owner) { g_pHyprRenderer->damageMonitor(owner); owner->scheduleFrame(); }
     const auto native = owner ? owner->m_activeWorkspace : PHLWORKSPACE{};
     const auto nativeGroup = native ? model.groupFor(native->m_id) : 0;
-    if (!model.ensureTrailingEmpty(nonempty(), occupied())) return;
+    const bool changed = model.ensureTrailingEmpty(nonempty(), occupied());
+    const auto pressedWindow = pressedHit ? pressedHit->window.lock() : PHLWINDOW{};
+    if (pressedHit && ((pressedHit->desktop && !model.groupFor(pressedHit->desktop)) ||
+        (pressedHit->kind == Kind::Window && (!pressedWindow || !pressedWindow->m_isMapped)))) {
+        pressedHit.reset();
+        dragging = false;
+        if (dragPreview && !dragPreview->settling) dragPreview.reset();
+    }
+    if (!changed) return;
     if ((desktopSwipeSource && !model.groupFor(desktopSwipeSource->m_id)) ||
         (desktopSwipeTarget && !model.groupFor(desktopSwipeTarget->m_id))) cancelDesktopSwipe();
     if (nativeGroup && !model.groupFor(native->m_id)) {
         const auto selected = model.current().selected;
         focus(model.group(nativeGroup)->desktops.back());
         model.select(selected);
-    }
-    if (pressedHit && pressedHit->desktop && !model.groupFor(pressedHit->desktop)) {
-        pressedHit.reset();
-        dragging = false;
     }
     std::erase_if(hits, [&](const auto& hit) { return hit.desktop && !model.groupFor(hit.desktop); });
     targets();
@@ -173,7 +198,7 @@ void CCascadeOverview::show() {
     reveal.target = 1;
     keyboardWindow.reset();
     lastFrame = std::chrono::steady_clock::now();
-    targets();
+    targets(reveal.value == 0);
 }
 
 void CCascadeOverview::releaseComposition() {
@@ -190,12 +215,16 @@ void CCascadeOverview::beforeRender() {
         // The scheduler checked scanout before these frame-batched offsets changed.
         if (const auto owner = getOwner()) owner->recheckSolitary();
     }
-    if (!active && reveal.value < .001) releaseComposition();
+    if (!active && reveal.value == 0) {
+        previewListeners.clear();
+        releaseComposition();
+    }
 }
 
 void CCascadeOverview::hide(bool immediate) {
     if (immediate) cancelDesktopSwipe();
     active = false;
+    lastFrame = std::chrono::steady_clock::now();
     reveal.target = 0;
     if (immediate || !config.animate->value()) {
         reveal.value = 0;
@@ -203,6 +232,8 @@ void CCascadeOverview::hide(bool immediate) {
     }
     dragging = false;
     pressedHit.reset();
+    dragPreview.reset();
+    previewListeners.clear();
     keyboardWindow.reset();
     save();
     targets();
@@ -325,7 +356,7 @@ bool CCascadeOverview::command(const std::string& line, std::string& error) {
 
 std::string CCascadeOverview::inspect() {
     std::ostringstream out;
-    out << "{\"active\":" << (active ? "true" : "false") << ",\"monitor\":" << ownerID << ",\"activeGroup\":" << model.activeGroup << ",\"selected\":" << model.current().selected << ",\"renaming\":false,\"status\":" << json(std::chrono::steady_clock::now() < statusUntil ? statusText : "") << ",\"statePath\":" << json(statePath.string()) << ",\"groups\":[";
+    out << "{\"active\":" << (active ? "true" : "false") << ",\"reveal\":" << reveal.value << ",\"dragging\":" << (dragging ? "true" : "false") << ",\"settling\":" << (dragPreview && dragPreview->settling ? "true" : "false") << ",\"monitor\":" << ownerID << ",\"activeGroup\":" << model.activeGroup << ",\"selected\":" << model.current().selected << ",\"renaming\":false,\"status\":" << json(std::chrono::steady_clock::now() < statusUntil ? statusText : "") << ",\"statePath\":" << json(statePath.string()) << ",\"groups\":[";
     for (size_t i = 0; i < model.groups.size(); ++i) {
         if (i) out << ',';
         const auto& group = model.groups[i];
@@ -333,7 +364,14 @@ std::string CCascadeOverview::inspect() {
         for (size_t j = 0; j < group.desktops.size(); ++j) { if (j) out << ','; out << group.desktops[j]; }
         out << "]}";
     }
-    out << "],\"hits\":[";
+    out << "],\"preview\":";
+    if (dragPreview) {
+        const auto owner = getOwner();
+        const auto origin = owner ? owner->m_position : Vector2D{};
+        const auto& box = dragPreview->box;
+        out << "{\"kind\":" << int(dragPreview->source.kind) << ",\"x\":" << box.x + origin.x << ",\"y\":" << box.y + origin.y << ",\"w\":" << box.w << ",\"h\":" << box.h << '}';
+    } else out << "null";
+    out << ",\"hits\":[";
     for (size_t i = 0; i < hits.size(); ++i) {
         if (i) out << ',';
         const auto& hit = hits[i];

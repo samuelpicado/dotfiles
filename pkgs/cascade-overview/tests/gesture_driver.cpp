@@ -14,6 +14,13 @@ extern "C" {
 
 APICALL EXPORT std::string PLUGIN_API_VERSION() { return HYPRLAND_API_VERSION; }
 
+static uint64_t renderedFrames = 0;
+static CHyprSignalListener frameListener;
+static int frameCount(lua_State* state) {
+    lua_pushinteger(state, renderedFrames);
+    return 1;
+}
+
 static int swipe(lua_State* state) {
     const auto fingers = static_cast<uint32_t>(luaL_checkinteger(state, 1));
     const double x = luaL_checknumber(state, 2), y = luaL_checknumber(state, 3);
@@ -87,6 +94,10 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
     HyprlandAPI::addLuaFunction(handle, "cascade_test", "update", swipeUpdate);
     HyprlandAPI::addLuaFunction(handle, "cascade_test", "finish", swipeEnd);
     HyprlandAPI::addLuaFunction(handle, "cascade_test", "workspace", workspace);
+    HyprlandAPI::addLuaFunction(handle, "cascade_test", "frames", frameCount);
+    frameListener = Event::bus()->m_events.render.stage.listen([](eRenderStage stage) {
+        if (stage == RENDER_LAST_MOMENT) ++renderedFrames;
+    });
     return {"Cascade gesture test driver", "Isolated native gesture-event fixture", "Cascade contributors", "1.0"};
 }
-APICALL EXPORT void PLUGIN_EXIT() {}
+APICALL EXPORT void PLUGIN_EXIT() { frameListener = {}; }

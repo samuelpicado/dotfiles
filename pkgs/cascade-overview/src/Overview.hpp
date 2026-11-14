@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Model.hpp"
+#include "Layout.hpp"
 #include <hyprland/src/Compositor.hpp>
 #include <hyprland/src/devices/IPointer.hpp>
 #include <chrono>
@@ -37,10 +38,6 @@ public:
     bool endSwipe(const IPointer::SSwipeEndEvent& event);
 
 private:
-    struct Motion {
-        double value = 0, target = 0;
-        void tick(double dt, bool animate);
-    };
     // Preserve the remaining hit IDs exposed by hyprctl cascade.
     enum class Kind { Desktop, Window, NewGroup = 3, GroupUp = 6, GroupDown, RemoveGroup };
     struct Hit {
@@ -48,6 +45,16 @@ private:
         CBox box;
         Cascade::Id group = 0, desktop = 0;
         PHLWINDOWREF window;
+    };
+    struct CardMotion {
+        Cascade::Motion x, y;
+        Cascade::Id group = 0;
+    };
+    struct DragPreview {
+        Hit source;
+        CBox box;
+        Cascade::Motion progress{0, 1};
+        bool settling = false;
     };
     int64_t ownerID;
     Cascade::Model model;
@@ -58,12 +65,16 @@ private:
     std::string statusText;
     std::chrono::steady_clock::time_point statusUntil{};
     std::optional<Hit> pressedHit;
+    std::optional<DragPreview> dragPreview;
     Vector2D pressPosition = {0, 0}, pointer = {0, 0}, swipeDelta = {0, 0};
     int swipeAxis = 0;
     uint32_t swipeFingers = 0;
     double wheelX = 0, wheelY = 0;
-    Motion reveal, row;
-    std::map<Cascade::Id, Motion> columns;
+    Cascade::Motion reveal, row;
+    std::map<Cascade::Id, Cascade::Motion> columns;
+    std::map<Cascade::Id, Cascade::Motion> groupRows;
+    std::map<Cascade::Id, CardMotion> cards;
+    std::map<void*, CHyprSignalListener> previewListeners;
     std::chrono::steady_clock::time_point lastFrame = std::chrono::steady_clock::now();
     std::chrono::steady_clock::time_point lastWheel = lastFrame;
     std::map<std::string, SP<Render::ITexture>> labels;
@@ -79,11 +90,12 @@ private:
     bool moveWindow(PHLWINDOW window, Cascade::Id desktop);
     void activate(const Hit& hit);
     void drop(const Hit& from, const Hit& to);
+    CBox dragBox(const Hit& source, Vector2D coordinates);
     void notify(const std::string& message);
     void releaseComposition();
     void updateDesktopSwipe();
     void finishDesktopSwipe(bool commit, bool immediate = false);
     void cancelDesktopSwipe();
     const Hit* hitAt(Vector2D coordinates, bool includeWindows = true) const;
-    void text(const std::string& value, double x, double y, double size, CHyprColor color, double maxWidth = 0, bool centered = false);
+    void text(const std::string& value, double x, double y, double size, CHyprColor color, double maxWidth = 0, bool centered = false, double opacity = 1, double zoom = 1);
 };

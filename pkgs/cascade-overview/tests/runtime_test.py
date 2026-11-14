@@ -8,6 +8,8 @@ import shutil
 import sys
 import time
 import unittest
+from contextlib import contextmanager
+from virtual_pointer import Pointer
 
 ROOT = Path(os.environ.get('CASCADE_QA_ROOT', '/tmp/cascade-qa')).resolve()
 if not ROOT.is_relative_to('/tmp'):
@@ -132,6 +134,37 @@ class CascadeRuntime(unittest.TestCase):
     def dimensions(self):
         monitor = next(m for m in json.loads(self.hc('monitors', '-j')) if m['id'] == self.state()['monitor'])
         return round(monitor['width'] / monitor['scale']), round(monitor['height'] / monitor['scale'])
+
+    @contextmanager
+    def holding(self, source, destination):
+        pointer = Pointer()
+        width, height = self.dimensions()
+        pointer.move(*self.center(source), width, height)
+        time.sleep(.06)
+        pointer.button(True)
+        time.sleep(.06)
+        pointer.move(*destination, width, height)
+        time.sleep(.12)
+        try:
+            yield pointer
+        finally:
+            pointer.button(False)
+            pointer.finish()
+
+    def frame(self, name):
+        ppm = subprocess.check_output(['grim', '-t', 'ppm', '-'], env=self.env, timeout=6)
+        (ROOT / 'artifacts' / (name + '.ppm')).write_bytes(ppm)
+        _, dimensions, _, pixels = ppm.split(b'\n', 3)
+        return (*map(int, dimensions.split()), pixels)
+
+    def blue_in(self, frame, box):
+        width, height, pixels = frame
+        logical_width, logical_height = self.dimensions()
+        x, y, w, h = box
+        left, right = max(0, round(x * width / logical_width)), min(width, round((x + w) * width / logical_width))
+        top, bottom = max(0, round(y * height / logical_height)), min(height, round((y + h) * height / logical_height))
+        area = b''.join(pixels[(row * width + left) * 3:(row * width + right) * 3] for row in range(top, bottom))
+        return sum(b > 100 and b > r * 1.5 and b > g * 1.5 for r, g, b in zip(area[0::3], area[1::3], area[2::3]))
 
     def test_01_inspect_with_real_window(self):
         self.fresh()
@@ -442,7 +475,7 @@ class CascadeRuntime(unittest.TestCase):
         self.eval('hl.config({cursor={invisible=false,inactive_timeout=-1}})')
         self.hc('setcursor', 'Adwaita', '32')
         width, height = self.dimensions()
-        x, y = min(100, width // 4), min(400, height - 60)
+        x, y = min(100, width // 4), 30
         pointer = [sys.executable, str(Path(__file__).with_name('virtual_pointer.py')), 'move']
         extent = ['--width', str(width), '--height', str(height)]
         self.api('open')
@@ -450,15 +483,18 @@ class CascadeRuntime(unittest.TestCase):
         time.sleep(.2)
         ppm = subprocess.check_output(['grim', '-t', 'ppm', '-'], env=self.env, timeout=6)
         _, dimensions, _, pixels = ppm.split(b'\n', 3)
+        subprocess.run(pointer + [str(width - x), str(y)] + extent, env=self.env, check=True, timeout=6)
+        time.sleep(.12)
+        moved = subprocess.check_output(['grim', '-t', 'ppm', '-'], env=self.env, timeout=6).split(b'\n', 3)[3]
         pixel_width, pixel_height = map(int, dimensions.split())
         scale_x, scale_y = pixel_width / width, pixel_height / height
         pixel_x, pixel_y = round(x * scale_x), round(y * scale_y)
-        bright = 0
+        changed = 0
         for sample_y in range(max(0, pixel_y - 5), min(pixel_height, pixel_y + round(45 * scale_y))):
             for sample_x in range(max(0, pixel_x - 5), min(pixel_width, pixel_x + round(45 * scale_x))):
                 offset = (sample_y * pixel_width + sample_x) * 3
-                bright += max(pixels[offset:offset + 3]) > 100
-        self.assertGreater(bright, 8, 'The software cursor must be rendered above the overview background')
+                changed += any(abs(a - b) > 40 for a, b in zip(pixels[offset:offset + 3], moved[offset:offset + 3]))
+        self.assertGreater(changed, 8, 'Moving the software cursor must change its old position above the static glass veil')
 
     def test_23_occupied_delete_displays_feedback(self):
         desktop = self.fresh()
@@ -1175,6 +1211,203 @@ end''')
         self.assertEqual(after['selected'], preview, 'A workspace change on another monitor must preserve the preview desktop')
         self.assertEqual(after['groups'], before['groups'])
         self.assertTrue(any(client['workspace']['id'] == first for client in self.clients()))
+
+    def test_51_window_drag_draws_real_preview_beside_cursor(self):
+        self.fresh()
+        window = self.foot("while :; do printf '\\033[48;2;0;0;220m\\033[2J'; sleep .2; done")
+        self.api('open')
+        source = self.hit(1, window=window['address'])
+        self.wait(lambda: self.blue_in(self.frame('window-source'), (source['x'], source['y'], source['w'], source['h'])) > 1000)
+        with self.holding(source, (80, 140)) as pointer:
+            self.assertGreater(self.blue_in(self.frame('window-drag'), (96, 152, 240, 170)), 1000,
+                               'A held window must have a real blue miniature next to the cursor')
+            pointer.move(160, 170, *self.dimensions())
+            time.sleep(.08)
+            self.assertGreater(self.blue_in(self.frame('window-drag-moved'), (176, 182, 240, 170)), 1000,
+                               'The miniature must follow subsequent pointer motion')
+            self.assertEqual(self.client(window['address'])['workspace']['id'], source['desktop'])
+
+    def test_52_desktop_drag_draws_its_windows_beside_cursor(self):
+        desktop = self.fresh()
+        self.foot("while :; do printf '\\033[48;2;0;0;220m\\033[2J'; sleep .2; done")
+        self.api('open')
+        source = self.hit(0, desktop=desktop)
+        self.wait(lambda: self.blue_in(self.frame('desktop-source'), (source['x'], source['y'], source['w'], source['h'])) > 1000)
+        # The card heading is the desktop drag handle; its interior contains windows.
+        heading = dict(source, h=28)
+        with self.holding(heading, (80, 140)):
+            self.assertGreater(self.blue_in(self.frame('desktop-drag'), (96, 152, 250, 180)), 500,
+                               'A held desktop must show its actual windows in a reduced card')
+
+    def test_53_glass_chrome_is_light_and_translucent(self):
+        self.fresh()
+        self.foot("while :; do printf '\\033[48;2;0;0;220m\\033[2J'; sleep .7; printf '\\033[48;2;220;0;0m\\033[2J'; sleep .7; done")
+        self.api('open')
+        samples = []
+        for index in range(6):
+            width, height, pixels = self.frame('glass-' + str(index))
+            logical_width, logical_height = self.dimensions()
+            offset = (round(150 * height / logical_height) * width + round(24 * width / logical_width)) * 3
+            rgb = tuple(pixels[offset:offset + 3])
+            self.assertGreater(min(rgb), 80, 'Chrome must use a light gray veil instead of an almost black background')
+            samples.append(rgb)
+            time.sleep(.23)
+        self.assertGreater(max(s[0] for s in samples) - min(s[0] for s in samples), 15,
+                           'Underlying live desktop colors must remain visible through the veil')
+
+    def test_54_reveal_and_reversal_are_continuous(self):
+        self.fresh()
+        self.foot()
+        self.eval('hl.config({plugin={cascade={animate=true}}})')
+        self.addCleanup(lambda: self.eval('hl.config({plugin={cascade={animate=false}}})'))
+        self.eval('assert(hl.plugin.cascade.open(""))')
+        time.sleep(.045)
+        opening = self.state()['reveal']
+        self.assertGreater(opening, 0)
+        self.assertLess(opening, .95)
+        self.frame('opening')
+        self.eval('assert(hl.plugin.cascade.close(""))')
+        closing = self.state()['reveal']
+        self.assertGreater(closing, 0, 'Closing must start from the visible position')
+        self.eval('assert(hl.plugin.cascade.open(""))')
+        reopening = self.state()['reveal']
+        self.assertGreater(reopening, 0, 'Reopening must continue the existing transition')
+        self.wait(lambda: self.state()['reveal'] == 1)
+        self.api('close')
+        self.wait(lambda: self.state()['reveal'] == 0)
+
+    def test_55_reordered_cards_move_through_intermediate_positions(self):
+        first = self.fresh()
+        self.foot()
+        self.command('desktop-select 2')
+        self.foot()
+        self.api('open')
+        selected = self.state()['selected']
+        original = self.hit(0, desktop=first)['x']
+        self.eval('hl.config({plugin={cascade={animate=true}}})')
+        self.addCleanup(lambda: self.eval('hl.config({plugin={cascade={animate=false}}})'))
+        self.eval('assert(hl.plugin.cascade.command("desktop-left"))')
+        time.sleep(.04)
+        hits = self.state()['hits']
+        middle = next(hit['x'] for hit in hits if hit['kind'] == 0 and hit['desktop'] == first)
+        selected_middle = next(hit['x'] for hit in hits if hit['kind'] == 0 and hit['desktop'] == selected)
+        self.frame('reorder-middle')
+        time.sleep(.8)
+        hits = self.state()['hits']
+        final = next(hit['x'] for hit in hits if hit['kind'] == 0 and hit['desktop'] == first)
+        selected_final = next(hit['x'] for hit in hits if hit['kind'] == 0 and hit['desktop'] == selected)
+        self.assertGreater(middle, original + 1)
+        self.assertLess(middle, final - 8, 'Reordered neighboring cards must travel instead of teleporting')
+        self.assertLess(middle - selected_middle, final - selected_final - 8,
+                        'Cards must cross through intermediate relative positions instead of immediately swapping slots')
+
+    def test_56_desktop_drop_lands_smoothly_and_escape_cancels_preview(self):
+        desktop = self.fresh()
+        self.foot('while :; do printf "\\033[48;2;0;0;220m\\033[2J"; sleep .2; done')
+        self.command('group-new')
+        target_group = self.state()['activeGroup']
+        destination = self.state()['selected']
+        self.api('navigate', 'up')
+        self.api('open')
+        source = self.hit(0, desktop=desktop)
+        target = self.hit(0, desktop=destination)
+        self.eval('hl.config({plugin={cascade={animate=true}}})')
+        self.addCleanup(lambda: self.eval('hl.config({plugin={cascade={animate=false}}})'))
+        with self.holding(dict(source, h=28), self.center(target)):
+            self.assertTrue(self.state()['dragging'])
+        self.assertTrue(self.state()['settling'], 'Releasing a desktop must retain its landing preview')
+        self.frame('desktop-landing')
+        self.wait(lambda: not self.state()['settling'])
+        self.assertIn(desktop, self.group(target_group)['desktops'])
+        source = self.hit(0, desktop=desktop)
+        with self.holding(dict(source, h=28), (80, 150)):
+            self.keys('-k', 'Escape')
+            self.assertFalse(self.state()['dragging'])
+            self.assertFalse(self.state()['settling'])
+        self.wait(lambda: self.state()['reveal'] == 0)
+
+    def test_57_fractional_scale_drag_preview_stays_inside_output(self):
+        self.fresh()
+        window = self.foot('while :; do printf "\\033[48;2;0;0;220m\\033[2J"; sleep .2; done')
+        self.eval(f'hl.monitor({{output="{MONITOR}",mode="1280x800@60",position="0x0",scale=1.25}})')
+        self.addCleanup(lambda: self.eval(f'hl.monitor({{output="{MONITOR}",mode="1280x800@60",position="0x0",scale=1}})'))
+        self.api('open')
+        source = self.hit(1, window=window['address'])
+        self.wait(lambda: self.blue_in(self.frame('fractional-source'), (source['x'], source['y'], source['w'], source['h'])) > 1000)
+        width, height = self.dimensions()
+        with self.holding(source, (width - 20, height // 2)):
+            self.assertGreater(self.blue_in(self.frame('fractional-drag'), (width - 280, height // 2, 280, 190)), 1000,
+                               'A cursor at the right edge must keep its miniature inside the scaled output')
+
+    def test_58_closed_window_cancels_held_preview(self):
+        self.fresh()
+        window = self.foot()
+        self.foot()
+        self.api('open')
+        with self.holding(self.hit(1, window=window['address']), (80, 150)):
+            self.assertTrue(self.state()['dragging'])
+            self.close_window(window)
+            self.wait(lambda: not self.state()['dragging'])
+            self.assertFalse(self.state()['settling'])
+
+    def test_59_transferred_desktop_does_not_teleport_group_controls(self):
+        desktop = self.fresh()
+        self.foot()
+        self.command('group-new')
+        target_group, destination = self.state()['activeGroup'], self.state()['selected']
+        self.api('navigate', 'up')
+        self.api('open')
+        source = self.hit(0, desktop=desktop)
+        target = self.hit(0, desktop=destination)
+        self.eval('hl.config({plugin={cascade={animate=true}}})')
+        self.addCleanup(lambda: self.eval('hl.config({plugin={cascade={animate=false}}})'))
+        with self.holding(dict(source, h=28), self.center(target)):
+            pass
+        time.sleep(.04)
+        hits = self.state()['hits']
+        card = next(hit for hit in hits if hit['kind'] == 0 and hit['desktop'] == destination)
+        controls = next(hit for hit in hits if hit['kind'] == 6 and hit['group'] == target_group)
+        self.assertAlmostEqual(controls['y'], card['y'] - 36, delta=2,
+                               msg='Target group controls must stay anchored to their own row when its first desktop changes')
+
+    def test_60_release_before_next_frame_starts_preview_at_cursor(self):
+        self.fresh()
+        window = self.foot('while :; do printf "\\033[48;2;0;0;220m\\033[2J"; sleep .2; done')
+        self.api('open')
+        source = self.hit(1, window=window['address'])
+        self.wait(lambda: self.blue_in(self.frame('batch-source'), (source['x'], source['y'], source['w'], source['h'])) > 1000)
+        self.eval('hl.config({plugin={cascade={animate=true}}})')
+        self.addCleanup(lambda: self.eval('hl.config({plugin={cascade={animate=false}}})'))
+        pointer = Pointer()
+        try:
+            pointer.move(*self.center(source), *self.dimensions())
+            time.sleep(.05)
+            pointer.button(True)
+            time.sleep(.05)
+            pointer.move(80, 140, *self.dimensions())
+            pointer.button(False)
+            preview = self.state().get('preview')
+            self.assertIsNotNone(preview, 'A batched release must preserve its landing geometry')
+            self.assertEqual((preview['x'], preview['y']), (98, 160))
+            self.assertGreater(preview['w'], 100)
+            self.assertGreater(self.blue_in(self.frame('batched-release'), (96, 152, 300, 210)), 1000,
+                               'A motion/release batch must land from the final cursor position, never an empty box at the origin')
+        finally:
+            pointer.button(False)
+            pointer.finish()
+
+    def test_61_idle_overview_stops_requesting_frames(self):
+        driver = os.environ['CASCADE_QA_GESTURE_DRIVER']
+        self.hc('plugin', 'load', driver)
+        self.addCleanup(lambda: self.hc('plugin', 'unload', driver))
+        self.fresh()
+        self.eval('hl.config({cursor={invisible=true},plugin={cascade={animate=false}}})')
+        self.addCleanup(lambda: self.eval('hl.config({cursor={invisible=false},plugin={cascade={animate=false}}})'))
+        self.api('open')
+        time.sleep(.15)
+        self.eval('_G.cascadeQaIdleFrames = hl.plugin.cascade_test.frames()')
+        time.sleep(.45)
+        self.eval('local frames = hl.plugin.cascade_test.frames() - _G.cascadeQaIdleFrames; assert(frames <= 2, "Idle overview rendered " .. frames .. " frames instead of sleeping")')
 
 
 if __name__ == '__main__':

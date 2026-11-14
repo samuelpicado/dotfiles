@@ -16,9 +16,24 @@ int main() {
     assert(Cascade::swipeAxis(2, 3) == 0);
     assert(Cascade::swipeAxis(15, 9) == 1);
     assert(Cascade::swipeAxis(9, -15) == 2);
-    assert(Cascade::approach(0, 10, 0, true) == 0);
-    assert(Cascade::approach(0, 10, 0.016, true) > 0);
-    assert(Cascade::approach(0, 10, 0.016, true) < 10);
-    assert(Cascade::approach(0, 10, 0.016, false) == 10);
-    std::cout << "4 layout tests passed\n";
+    Cascade::Motion at60{0, 1}, at120{0, 1};
+    for (int i = 0; i < 30; ++i) {
+        const double previous = at60.value;
+        at60.tick(1. / 60, true);
+        assert(at60.value >= previous && at60.value <= 1);
+        at120.tick(1. / 120, true);
+        at120.tick(1. / 120, true);
+        assert(std::abs(at60.value - at120.value) < .001);
+    }
+    assert(at60.value > .99);
+    at60.target = 0;
+    const double beforeReverse = at60.value;
+    at60.tick(0, true);
+    assert(at60.value == beforeReverse);
+    for (int i = 0; i < 60; ++i) at60.tick(1. / 60, true);
+    assert(at60.value == 0 && at60.velocity == 0);
+    at60.target = 7;
+    at60.tick(.016, false);
+    assert(at60.value == 7 && at60.velocity == 0);
+    std::cout << "5 layout tests passed\n";
 }

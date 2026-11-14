@@ -17,6 +17,7 @@
     fastfetch
     opencode
     codex
+    chatgpt
     bat
     eza
     fd

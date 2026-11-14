@@ -62,7 +62,7 @@ hl.window_rule({match={class="^cascade-qa-.*$"},tag="+hyprglass_preset_glass"})
     env = os.environ.copy()
     for key in ('HYPRLAND_INSTANCE_SIGNATURE', 'DISPLAY'):
         env.pop(key, None)
-    env.update(CASCADE_QA_ROOT=str(root), CASCADE_QA_RUNTIME=str(root / 'r'), XDG_RUNTIME_DIR=str(root / 'r'), XDG_STATE_HOME=str(root / 'state'),
+    env.update(PYTHONDONTWRITEBYTECODE='1', CASCADE_QA_ROOT=str(root), CASCADE_QA_RUNTIME=str(root / 'r'), XDG_RUNTIME_DIR=str(root / 'r'), XDG_STATE_HOME=str(root / 'state'),
                XDG_CONFIG_HOME=str(root / 'config'), XDG_CACHE_HOME=str(root / 'cache'), WAYLAND_DISPLAY=str(parent_display),
                HYPRLAND_NO_SD_VARS='1', HYPRLAND_NO_SD_NOTIFY='1', HYPRLAND_NO_RT='1', LIBSEAT_BACKEND='none', AQ_DRM_DEVICES='/dev/null')
     print(f'Isolated QA artifacts: {root}', flush=True)
@@ -107,13 +107,15 @@ hl.window_rule({match={class="^cascade-qa-.*$"},tag="+hyprglass_preset_glass"})
         if args.hyprglass:
             hc('plugin', 'load', str(args.hyprglass.resolve()))
         hc('plugin', 'load', str(plugin))
+        # The warning for this deliberately isolated launch animates every refresh.
+        hc('dismissnotify', '-1')
         (root / 'env.sh').write_text(''.join(f'export {key}={shlex.quote(value)}\n' for key, value in env.items()
                                            if key.startswith(('CASCADE_QA_', 'XDG_')) or key in ('WAYLAND_DISPLAY', 'HYPRLAND_INSTANCE_SIGNATURE')))
         command = [sys.executable, str(Path(__file__).with_name('runtime_test.py'))]
         if args.tests:
             command.extend(name if '.' in name else 'CascadeRuntime.' + name for name in args.tests)
         with (root / 'artifacts/runtime-tests.log').open('w') as log:
-            result = subprocess.run(command, env=env, stdout=log, stderr=subprocess.STDOUT, timeout=120)
+            result = subprocess.run(command, env=env, stdout=log, stderr=subprocess.STDOUT, timeout=180)
         print((root / 'artifacts/runtime-tests.log').read_text())
         return result.returncode
     finally:
