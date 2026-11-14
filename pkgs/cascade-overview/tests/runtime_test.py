@@ -1243,17 +1243,32 @@ end''')
         self.fresh()
         self.foot("while :; do printf '\\033[48;2;0;0;220m\\033[2J'; sleep .7; printf '\\033[48;2;220;0;0m\\033[2J'; sleep .7; done")
         self.api('open')
+        card = self.hit(0, desktop=self.state()['selected'])
+        logical_width, logical_height = self.dimensions()
         samples = []
+        card_samples = []
         for index in range(6):
             width, height, pixels = self.frame('glass-' + str(index))
-            logical_width, logical_height = self.dimensions()
-            offset = (round(150 * height / logical_height) * width + round(24 * width / logical_width)) * 3
+            offset = (round(200 * height / logical_height) * width + round(100 * width / logical_width)) * 3
             rgb = tuple(pixels[offset:offset + 3])
-            self.assertGreater(min(rgb), 80, 'Chrome must use a light gray veil instead of an almost black background')
-            samples.append(rgb)
+            if max(rgb) - min(rgb) > 40:
+                self.assertLess(min(rgb), 40, 'The overview backdrop must preserve desktop colors without a white or gray tint')
+                samples.append(rgb)
+            offset = (round((card['y'] + 18) * height / logical_height) * width + round((card['x'] + card['w'] - 24) * width / logical_width)) * 3
+            card_rgb = tuple(pixels[offset:offset + 3])
+            self.assertGreater(min(card_rgb), 75, 'Desktop cards must remain distinguishable from the transparent backdrop')
+            self.assertLess(min(card_rgb), 170, 'Desktop cards must have a softer fill instead of an opaque white panel')
+            if max(rgb) - min(rgb) > 40:
+                card_samples.append(card_rgb)
+                offset = (round((card['y'] + 18) * height / logical_height) * width + round((card['x'] + card['w']) * width / logical_width)) * 3
+                edge_rgb = tuple(pixels[offset:offset + 3])
+                self.assertGreater(max(abs(a - b) for a, b in zip(edge_rgb, rgb)), 15, 'The desktop outline must remain visible over the backdrop')
             time.sleep(.23)
-        self.assertGreater(max(s[0] for s in samples) - min(s[0] for s in samples), 15,
-                           'Underlying live desktop colors must remain visible through the veil')
+        self.assertGreaterEqual(len(samples), 2, 'The transparent backdrop must expose the live desktop colors')
+        self.assertGreater(max(s[0] for s in samples) - min(s[0] for s in samples), 70,
+                           'Underlying live desktop colors must remain visible through the blur')
+        self.assertGreater(max(s[0] for s in card_samples) - min(s[0] for s in card_samples), 30,
+                           'Desktop card fills must let the underlying desktop colors show through')
 
     def test_54_reveal_and_reversal_are_continuous(self):
         self.fresh()

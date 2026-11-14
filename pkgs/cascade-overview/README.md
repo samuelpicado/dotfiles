@@ -4,7 +4,7 @@ El cierre animado devuelve el cursor al modo de hardware antes del siguiente fra
 
 Plugin nativo de Hyprland para organizar escritorios en grupos verticales y recorrer horizontalmente los escritorios de cada grupo. El overview dibuja miniaturas reales de las ventanas y permite seleccionarlas y moverlas con el ratón. Los grupos y los escritorios son dinámicos; diez es el número de atajos numéricos disponibles, no el límite del modelo.
 
-La interfaz usa cristal gris claro translúcido, contornos plateados y texto grafito. Un único desenfoque nativo detrás del overview conserva el escritorio visible; las tarjetas añaden capas translúcidas y un reflejo superior, sin desenfocar cada miniatura por separado. Las ventanas conservan los colores de su contenido.
+Las tarjetas de escritorio usan un relleno gris tenue y translúcido, contornos plateados visibles y texto grafito contrastado. El fondo general es transparente, sin velo de color, y aplica un único desenfoque nativo; el relleno y el reflejo superior quedan dentro de las tarjetas, sin desenfocar cada miniatura por separado. Las ventanas conservan los colores de su contenido.
 
 Al arrastrar una ventana o el título de un escritorio aparece una miniatura real junto al cursor. Incluye las ventanas del escritorio, sigue el puntero directamente y permanece dentro del monitor, también con escala fraccionaria. El origen se atenúa y se señala el destino. Al soltar, la miniatura aterriza suavemente en su posición; un destino inválido la devuelve al origen. Escape y el cierre de la ventana cancelan el arrastre.
 

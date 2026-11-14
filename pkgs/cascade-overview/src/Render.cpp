@@ -163,7 +163,7 @@ void CCascadeOverview::draw() {
     const auto previousClip = g_pHyprRenderer->m_renderData.clipBox;
     g_pHyprRenderer->m_renderData.clipBox = screen;
     Hyprutils::Utils::CScopeGuard restoreClip([&] { g_pHyprRenderer->m_renderData.clipBox = previousClip; });
-    const CHyprColor foreground(.20, .25, .29, 1), muted(.38, .43, .47, 1), silver(.72, .77, .82, 1), warning(.78, .42, .08, 1);
+    const CHyprColor foreground(.10, .14, .18, 1), muted(.12, .16, .20, 1), silver(.72, .77, .82, 1), warning(.78, .42, .08, 1);
     const bool hasStatus = now < statusUntil;
     const auto hovered = hitAt(pointer, !dragging);
     const auto hover = hovered ? std::optional<Hit>(*hovered) : std::nullopt;
@@ -192,8 +192,8 @@ void CCascadeOverview::draw() {
     auto glass = [&](CBox box, bool selected, bool pointed, double opacity = 1., bool clipped = true) {
         rect({box.x - 3, box.y + 4, box.w + 6, box.h + 2}, CHyprColor(.25, .30, .35, .08 * opacity), 16, clipped);
         rect({box.x - 1, box.y - 1, box.w + 2, box.h + 2},
-             CHyprColor(selected || pointed ? .62 : .85, selected || pointed ? .68 : .89, selected || pointed ? .74 : .93, .85 * opacity), 14, clipped);
-        rect(box, CHyprColor(.88, .91, .94, (selected || pointed ? .76 : .55) * opacity), 13, clipped);
+             CHyprColor(selected || pointed ? .62 : .85, selected || pointed ? .68 : .89, selected || pointed ? .74 : .93, .35 * opacity), 14, clipped);
+        rect(box, CHyprColor(.80, .83, .86, (selected || pointed ? .45 : .35) * opacity), 13, clipped);
         rect({box.x + 14, box.y + 1, std::max(0., box.w - 28), 1}, CHyprColor(1., 1., 1., .75 * opacity), 0, clipped);
     };
     auto button = [&](const std::string& label, Kind kind, double x, double y, double w, Cascade::Id group) {
@@ -258,8 +258,8 @@ void CCascadeOverview::draw() {
         if (windows.empty()) text("Espacio para empezar", card.x + 20 * unit, std::max(visibleTop + 4, card.y + card.h / 2), 14, muted, geometry.cardWidth - 40, false, opacity, unit);
     };
 
-    // One native backdrop blur, shared by every glass card and miniature.
-    rect({0, 0, width, height}, CHyprColor(.80, .83, .86, .68), 0, false, true);
+    // One native blur without a color veil; light fills stay inside the cards.
+    rect({0, 0, width, height}, CHyprColor(0., 0., 0., 0.), 0, false, true);
     for (size_t groupIndex = 0; groupIndex <= model.groups.size(); ++groupIndex) {
         const double groupY = groupIndex < model.groups.size() ? groupRows[model.groups[groupIndex].id].value : double(groupIndex);
         const double y = geometry.centerY + (groupY - row.value) * geometry.pitchY - geometry.cardHeight / 2 + (1 - alpha) * 24;
@@ -292,8 +292,10 @@ void CCascadeOverview::draw() {
             const double visibleTop = std::max(cardY, 90.), visibleBottom = std::min(cardY + geometry.cardHeight, height - 44);
             hit(Kind::Desktop, {x, visibleTop, geometry.cardWidth, visibleBottom - visibleTop}, group.id, desktop);
             desktopContents(desktop, card, opacity, true);
-            if (selected && hasStatus && visibleBottom - visibleTop >= 24)
-                text(statusText, x + 14, visibleBottom - 21, 12, warning, geometry.cardWidth - 28);
+            if (selected && hasStatus && visibleBottom - visibleTop >= 24) {
+                rect({x + 14, visibleBottom - 21, 3, 14}, warning, 1);
+                text(statusText, x + 22, visibleBottom - 21, 12, foreground, geometry.cardWidth - 36);
+            }
         }
     }
     if (dragPreview) {
