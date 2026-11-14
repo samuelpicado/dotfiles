@@ -138,31 +138,21 @@ void CCascadeOverview::draw() {
     if (dt > .1) dt = 1. / std::max(30., double(owner->m_refreshRate));
     lastFrame = now;
     const bool animate = config.animate->value() != 0;
-    reveal.tick(dt, animate, active ? 22 : 30);
+    const double transitionRate = active ? Cascade::overviewEnterRate : Cascade::overviewExitRate;
+    reveal.tick(dt, animate, transitionRate);
     if (!swiping || swipeFingers != 3 || swipeAxis != 2) row.tick(dt, animate);
     for (auto& [id, column] : columns)
         if (!swiping || swipeFingers != 3 || swipeAxis != 1 || id != model.activeGroup) column.tick(dt, animate);
-    for (auto& [id, card] : cards) { card.x.tick(dt, animate); card.y.tick(dt, animate); }
-    for (auto& [id, group] : groupRows) group.tick(dt, animate);
-    const double entryAge = std::chrono::duration<double>(now - entryStartedAt).count();
-    const auto originGroup = model.groupFor(transitionDesktop);
-    const auto origin = std::find_if(model.groups.begin(), model.groups.end(), [&](const auto& group) { return group.id == (originGroup ? originGroup : model.activeGroup); });
-    const int originRow = origin - model.groups.begin();
-    for (size_t y = 0; y < model.groups.size(); ++y) {
-        const auto& group = model.groups[y];
-        const auto selected = group.id == originGroup ? transitionDesktop : group.selected;
-        const int originColumn = std::find(group.desktops.begin(), group.desktops.end(), selected) - group.desktops.begin();
-        for (size_t x = 0; x < group.desktops.size(); ++x) {
-            const auto desktop = group.desktops[x];
-            auto& card = cards[desktop];
-            auto& appearance = card.appearance;
-            const int distance = std::abs(int(y) - originRow) + std::abs(int(x) - originColumn);
-            appearance.target = desktop == transitionDesktop || (active && (!animate || entryAge >= Cascade::staggerDelay(distance))) ? 1 : 0;
-            appearance.tick(dt, animate, active ? 22 : 30);
-            card.zoom.target = !active && desktop == transitionDesktop ? 0 : 1;
-            card.zoom.tick(dt, animate, active ? 22 : 30);
-        }
+    for (auto& [id, card] : cards) {
+        card.x.tick(dt, animate);
+        card.y.tick(dt, animate);
+        card.appearance.target = active || id == transitionDesktop ? 1 : 0;
+        card.appearance.tick(dt, animate, Cascade::desktopFadeRate);
+        card.zoom.target = !active && id == transitionDesktop ? 0 : 1;
+        card.zoom.tick(dt, animate, transitionRate);
     }
+    for (auto& [id, group] : groupRows) group.tick(dt, animate);
+    const auto originGroup = model.groupFor(transitionDesktop);
     if (dragPreview) {
         const auto window = dragPreview->source.window.lock();
         if (dragPreview->source.kind == Kind::Window ? !window || !window->m_isMapped : !model.groupFor(dragPreview->source.desktop))
@@ -400,7 +390,6 @@ void CCascadeOverview::draw() {
     for (const auto& [id, column] : columns)
         if (!swiping || swipeFingers != 3 || swipeAxis != 1 || id != model.activeGroup) moving |= column.value != column.target;
     for (const auto& [id, card] : cards) moving |= card.x.value != card.x.target || card.y.value != card.y.target || card.appearance.value != card.appearance.target || card.zoom.value != card.zoom.target;
-    moving |= active && animate && entryAge < Cascade::staggerDelay(3);
     for (const auto& [id, group] : groupRows) moving |= group.value != group.target;
     const auto local = pointer - owner->m_position;
     moving |= dragging && (local.x < 48 || local.x > width - 48 || local.y < 120 || local.y > height - 72);

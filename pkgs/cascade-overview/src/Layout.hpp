@@ -26,7 +26,9 @@ inline OverviewPhase overviewPhase(double progress) {
     const double zoom = phase(progress, .06, .995);
     return {phase(progress, 0, .6), zoom, zoom * phase(zoom, .72, 1)};
 }
-inline double staggerDelay(int distance) { return std::clamp(distance, 0, 3) * .02; }
+inline constexpr double overviewEnterRate = 18;
+inline constexpr double overviewExitRate = 24;
+inline constexpr double desktopFadeRate = 16;
 inline Rect fit(double x, double y, double w, double h, double sourceWidth, double sourceHeight) {
     const double scale = std::min(w / std::max(sourceWidth, 1.0), h / std::max(sourceHeight, 1.0));
     const double fw = sourceWidth * scale, fh = sourceHeight * scale;

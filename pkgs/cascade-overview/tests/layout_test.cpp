@@ -46,9 +46,25 @@ int main() {
         assert(phase.blur >= 0 && phase.blur <= 1 && phase.zoom >= 0 && phase.zoom <= 1);
         assert(phase.chrome >= 0 && phase.chrome <= phase.zoom);
     }
-    assert(Cascade::staggerDelay(0) == 0);
-    assert(Cascade::staggerDelay(1) == .02 && Cascade::staggerDelay(2) == .04);
-    assert(Cascade::staggerDelay(3) == .06 && Cascade::staggerDelay(1000) == .06);
+    Cascade::Motion entry{0, 1}, exit{1, 0}, fade{0, 1}, previousEntry{0, 1}, previousExit{1, 0};
+    entry.tick(.1, true, Cascade::overviewEnterRate);
+    exit.tick(.1, true, Cascade::overviewExitRate);
+    fade.tick(.1, true, Cascade::desktopFadeRate);
+    previousEntry.tick(.1, true, 22);
+    previousExit.tick(.1, true, 30);
+    assert(entry.value > 0 && entry.value < previousEntry.value);
+    assert(exit.value < 1 && exit.value > previousExit.value);
+    assert(fade.value > 0 && fade.value < entry.value);
+    for (const double rate : {Cascade::overviewEnterRate, Cascade::overviewExitRate, Cascade::desktopFadeRate}) {
+        Cascade::Motion slow60{0, 1}, slow120{0, 1};
+        for (int i = 0; i < 60; ++i) {
+            slow60.tick(1. / 60, true, rate);
+            slow120.tick(1. / 120, true, rate);
+            slow120.tick(1. / 120, true, rate);
+            assert(std::abs(slow60.value - slow120.value) < .001);
+        }
+        assert(slow60.value == 1 && slow120.value == 1);
+    }
     const Cascade::Rect screen{0, 0, 1280, 800}, card{400, 262, 480, 300};
     const auto full = Cascade::interpolate(screen, card, 0), thumbnail = Cascade::interpolate(screen, card, 1);
     assert(full.x == 0 && full.y == 0 && full.w == 1280 && full.h == 800);

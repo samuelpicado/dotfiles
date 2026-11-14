@@ -80,7 +80,6 @@ private:
     std::map<Cascade::Id, CardMotion> cards;
     std::map<void*, CHyprSignalListener> previewListeners;
     std::chrono::steady_clock::time_point lastFrame = std::chrono::steady_clock::now();
-    std::chrono::steady_clock::time_point entryStartedAt = lastFrame;
     std::chrono::steady_clock::time_point lastWheel = lastFrame;
     std::map<std::string, SP<Render::ITexture>> labels;
     PHLWINDOWREF keyboardWindow;

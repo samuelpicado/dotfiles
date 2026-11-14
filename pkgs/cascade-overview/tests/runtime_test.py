@@ -1454,7 +1454,7 @@ end''')
         self.wait(lambda: self.state()['reveal'] == 1)
         self.assertAlmostEqual(self.hit(0, desktop=desktop)['w'], final_card['w'], delta=1)
 
-    def test_63_neighbor_entry_is_staggered_outward(self):
+    def test_63_neighbor_desktops_fade_together_on_entry_and_exit(self):
         self.eval('hl.config({plugin={cascade={animate=false}}})')
         self.fresh()
         desktops = []
@@ -1463,17 +1463,36 @@ end''')
             desktops.append(self.state()['selected'])
             self.foot()
         self.command('desktop-select 3')
+        source = self.state()['selected']
         self.eval('hl.config({plugin={cascade={animate=true,cardWidth=280}}})')
         self.addCleanup(lambda: self.eval('hl.config({plugin={cascade={animate=false,cardWidth=480}}})'))
         self.eval('assert(hl.plugin.cascade.open(""))')
-        time.sleep(.055)
-        state = self.state()
-        alphas = {hit['desktop']: hit.get('opacity', state['reveal']) for hit in state['hits'] if hit['kind'] == 0}
-        self.assertGreater(alphas.get(desktops[1], 0), alphas.get(desktops[0], 0) + .005,
-                           'The nearest neighbor must appear before the more distant card')
-        self.frame('neighbors-staggered')
+        neighbors = set(desktops) - {source}
+        def during_fade(active):
+            state = self.state()
+            visible = {hit['desktop'] for hit in state['hits'] if hit['kind'] == 0}
+            return state if state['active'] == active and .05 < state['reveal'] < .85 and neighbors <= visible else None
+        state = self.wait(lambda: during_fade(True), interval=.005)
+        alphas = [hit['opacity'] for hit in state['hits'] if hit['kind'] == 0 and hit['desktop'] in neighbors]
+        self.assertGreater(min(alphas), 0)
+        self.assertAlmostEqual(max(alphas), min(alphas), delta=.000001,
+                               msg='All neighboring desktops must appear together, independent of distance')
+        self.assertLess(max(alphas), state['reveal'] ** 2 - .000001,
+                        'Neighbor cards must fade in more slowly than the main reveal')
+        self.frame('neighbors-fading-in')
         self.wait(lambda: self.state()['reveal'] == 1)
         self.wait(lambda: all(hit.get('opacity', 0) == 1 for hit in self.state()['hits'] if hit['kind'] == 0))
+        self.eval('assert(hl.plugin.cascade.close(""))')
+        state = self.wait(lambda: during_fade(False), interval=.005)
+        alphas = [hit['opacity'] for hit in state['hits'] if hit['kind'] == 0 and hit['desktop'] in neighbors]
+        self.assertGreater(min(alphas), 0)
+        self.assertLess(max(alphas), 1)
+        self.assertAlmostEqual(max(alphas), min(alphas), delta=.000001,
+                               msg='All neighboring desktops must disappear together')
+        self.assertGreater(min(alphas), state['reveal'] ** 2 + .000001,
+                           'Neighbor cards must fade out more slowly than the main reveal')
+        self.frame('neighbors-fading-out')
+        self.wait(lambda: self.state()['reveal'] == 0)
 
     def test_64_selected_exit_zooms_without_a_native_workspace_slide(self):
         self.eval('hl.config({plugin={cascade={animate=false}}})')

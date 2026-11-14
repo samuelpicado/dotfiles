@@ -193,7 +193,6 @@ void CCascadeOverview::show() {
     // Special workspaces have no card to zoom into.
     transitionDesktop = owner && owner->m_activeWorkspace && !owner->m_activeSpecialWorkspace ? owner->m_activeWorkspace->m_id : 0;
     if (reveal.value == 0) {
-        entryStartedAt = std::chrono::steady_clock::now();
         for (auto& [id, card] : cards) {
             card.appearance = id == transitionDesktop ? Cascade::Motion{1, 1} : Cascade::Motion{};
             card.zoom = id == transitionDesktop ? Cascade::Motion{0, 1} : Cascade::Motion{1, 1};
