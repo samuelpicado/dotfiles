@@ -45,10 +45,13 @@ private:
         CBox box;
         Cascade::Id group = 0, desktop = 0;
         PHLWINDOWREF window;
+        double opacity = 1;
     };
     struct CardMotion {
         Cascade::Motion x, y;
         Cascade::Id group = 0;
+        Cascade::Motion appearance{};
+        Cascade::Motion zoom{1, 1};
     };
     struct DragPreview {
         Hit source;
@@ -71,11 +74,13 @@ private:
     uint32_t swipeFingers = 0;
     double wheelX = 0, wheelY = 0;
     Cascade::Motion reveal, row;
+    Cascade::Id transitionDesktop = 0;
     std::map<Cascade::Id, Cascade::Motion> columns;
     std::map<Cascade::Id, Cascade::Motion> groupRows;
     std::map<Cascade::Id, CardMotion> cards;
     std::map<void*, CHyprSignalListener> previewListeners;
     std::chrono::steady_clock::time_point lastFrame = std::chrono::steady_clock::now();
+    std::chrono::steady_clock::time_point entryStartedAt = lastFrame;
     std::chrono::steady_clock::time_point lastWheel = lastFrame;
     std::map<std::string, SP<Render::ITexture>> labels;
     PHLWINDOWREF keyboardWindow;

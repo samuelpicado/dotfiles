@@ -35,5 +35,25 @@ int main() {
     at60.target = 7;
     at60.tick(.016, false);
     assert(at60.value == 7 && at60.velocity == 0);
-    std::cout << "5 layout tests passed\n";
+    const auto closed = Cascade::overviewPhase(0), open = Cascade::overviewPhase(1);
+    assert(closed.blur == 0 && closed.zoom == 0 && closed.chrome == 0);
+    assert(open.blur == 1 && open.zoom == 1 && open.chrome == 1);
+    const auto early = Cascade::overviewPhase(.05), middle = Cascade::overviewPhase(.5);
+    assert(early.blur > 0 && early.zoom == 0 && early.chrome == 0);
+    assert(middle.blur > middle.zoom && middle.zoom > middle.chrome);
+    for (int i = 0; i <= 100; ++i) {
+        const auto phase = Cascade::overviewPhase(i / 100.);
+        assert(phase.blur >= 0 && phase.blur <= 1 && phase.zoom >= 0 && phase.zoom <= 1);
+        assert(phase.chrome >= 0 && phase.chrome <= phase.zoom);
+    }
+    assert(Cascade::staggerDelay(0) == 0);
+    assert(Cascade::staggerDelay(1) == .02 && Cascade::staggerDelay(2) == .04);
+    assert(Cascade::staggerDelay(3) == .06 && Cascade::staggerDelay(1000) == .06);
+    const Cascade::Rect screen{0, 0, 1280, 800}, card{400, 262, 480, 300};
+    const auto full = Cascade::interpolate(screen, card, 0), thumbnail = Cascade::interpolate(screen, card, 1);
+    assert(full.x == 0 && full.y == 0 && full.w == 1280 && full.h == 800);
+    assert(thumbnail.x == 400 && thumbnail.y == 262 && thumbnail.w == 480 && thumbnail.h == 300);
+    const auto halfway = Cascade::interpolate(screen, card, .5);
+    assert(halfway.x == 200 && halfway.y == 131 && halfway.w == 880 && halfway.h == 550);
+    std::cout << "7 layout tests passed\n";
 }

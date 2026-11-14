@@ -8,7 +8,9 @@ Las tarjetas de escritorio usan un relleno gris tenue y translúcido, contornos 
 
 Al arrastrar una ventana o el título de un escritorio aparece una miniatura real junto al cursor. Incluye las ventanas del escritorio, sigue el puntero directamente y permanece dentro del monitor, también con escala fraccionaria. El origen se atenúa y se señala el destino. Al soltar, la miniatura aterriza suavemente en su posición; un destino inválido la devuelve al origen. Escape y el cierre de la ventana cancelan el arrastre.
 
-La apertura, el cierre, la navegación y el reordenamiento de tarjetas usan movimiento amortiguado que conserva su posición y velocidad al cambiar de destino. Las animaciones no dependen de la frecuencia del monitor; `animate=false` las resuelve inmediatamente. Las superficies y las texturas de texto se reutilizan, también durante el aterrizaje. Al quedar quieto, Cascade deja de solicitar frames: los cambios de las superficies visibles, el ratón y las transiciones vuelven a activar el renderizado.
+Al entrar, las ventanas del escritorio activo pasan de su posición y tamaño reales a sus miniaturas, mientras el escritorio se reduce hasta encajar en su tarjeta. Al elegir otro escritorio, su tarjeta y sus ventanas se expanden hacia la pantalla; esa transición sustituye al deslizamiento nativo para evitar dos animaciones simultáneas. Escape vuelve al escritorio activo. Los espacios especiales, que no tienen tarjeta, conservan el fundido.
+
+El desenfoque comienza antes que el zoom y se retira al final del cierre. Los títulos y controles aparecen cuando el encaje está avanzado. Los vecinos entran desde el escritorio activo hacia fuera, con 20 ms por distancia y un retraso máximo de 60 ms. La apertura, el cierre, la navegación y el reordenamiento usan movimiento amortiguado que conserva su posición y velocidad al cambiar de destino; el cierre es más rápido que la entrada. Las animaciones no dependen de la frecuencia del monitor y `animate=false` las resuelve inmediatamente, sin esperas escalonadas. Las superficies y las texturas de texto se reutilizan, también durante el zoom y el aterrizaje. Al quedar quieto, Cascade deja de solicitar frames: los cambios de las superficies visibles, el ratón y las transiciones vuelven a activar el renderizado.
 
 Fuera del overview, el gesto horizontal recorre tantos escritorios como se desplace la mano, sin levantar los dedos entre ellos. El recorrido es circular dentro del grupo: del último se pasa al primero y del primero al último, conservando el orden visual aunque los IDs nativos estén reordenados. No se crean escritorios adicionales al completar una vuelta. Cada escritorio completo queda confirmado; cancelar revierte solo el tramo pendiente, como en el gesto continuo nativo de Hyprland.
 
@@ -116,7 +118,7 @@ El paquete se llama `cascade-overview-1.0.0`; conserva el archivo `lib/libHyprsp
 
 ## Validación y límites
 
-Las 20 pruebas unitarias cubren el modelo, la geometría y el movimiento a 60/120 Hz. Las 61 pruebas gráficas crean una sesión Wayland aislada; el modo anidado conserva una salida con cursor de hardware para cubrir la ruta del crash. El modo headless sigue disponible. No utilizan el socket ni las ventanas de la sesión principal:
+Las 22 pruebas unitarias cubren el modelo, la geometría, las fases de zoom/desenfoque, el escalonado y el movimiento a 60/120 Hz. Las 67 pruebas gráficas crean una sesión Wayland aislada; el modo anidado conserva una salida con cursor de hardware para cubrir la ruta del crash. El modo headless sigue disponible. No utilizan el socket ni las ventanas de la sesión principal:
 
 ```sh
 nix build .#cascade-overview

@@ -138,12 +138,31 @@ void CCascadeOverview::draw() {
     if (dt > .1) dt = 1. / std::max(30., double(owner->m_refreshRate));
     lastFrame = now;
     const bool animate = config.animate->value() != 0;
-    reveal.tick(dt, animate);
+    reveal.tick(dt, animate, active ? 22 : 30);
     if (!swiping || swipeFingers != 3 || swipeAxis != 2) row.tick(dt, animate);
     for (auto& [id, column] : columns)
         if (!swiping || swipeFingers != 3 || swipeAxis != 1 || id != model.activeGroup) column.tick(dt, animate);
     for (auto& [id, card] : cards) { card.x.tick(dt, animate); card.y.tick(dt, animate); }
     for (auto& [id, group] : groupRows) group.tick(dt, animate);
+    const double entryAge = std::chrono::duration<double>(now - entryStartedAt).count();
+    const auto originGroup = model.groupFor(transitionDesktop);
+    const auto origin = std::find_if(model.groups.begin(), model.groups.end(), [&](const auto& group) { return group.id == (originGroup ? originGroup : model.activeGroup); });
+    const int originRow = origin - model.groups.begin();
+    for (size_t y = 0; y < model.groups.size(); ++y) {
+        const auto& group = model.groups[y];
+        const auto selected = group.id == originGroup ? transitionDesktop : group.selected;
+        const int originColumn = std::find(group.desktops.begin(), group.desktops.end(), selected) - group.desktops.begin();
+        for (size_t x = 0; x < group.desktops.size(); ++x) {
+            const auto desktop = group.desktops[x];
+            auto& card = cards[desktop];
+            auto& appearance = card.appearance;
+            const int distance = std::abs(int(y) - originRow) + std::abs(int(x) - originColumn);
+            appearance.target = desktop == transitionDesktop || (active && (!animate || entryAge >= Cascade::staggerDelay(distance))) ? 1 : 0;
+            appearance.tick(dt, animate, active ? 22 : 30);
+            card.zoom.target = !active && desktop == transitionDesktop ? 0 : 1;
+            card.zoom.tick(dt, animate, active ? 22 : 30);
+        }
+    }
     if (dragPreview) {
         const auto window = dragPreview->source.window.lock();
         if (dragPreview->source.kind == Kind::Window ? !window || !window->m_isMapped : !model.groupFor(dragPreview->source.desktop))
@@ -155,10 +174,16 @@ void CCascadeOverview::draw() {
     }
 
     const double alpha = std::clamp(reveal.value, 0., 1.);
+    const auto phase = Cascade::overviewPhase(alpha);
     const double scale = owner->m_scale;
     const double width = owner->m_transformedSize.x / scale, height = owner->m_transformedSize.y / scale;
     const auto geometry = Cascade::Geometry::make(width, height, config.cardWidth->value(), config.rowHeight->value());
     const CBox screen = {0, 0, owner->m_transformedSize.x, owner->m_transformedSize.y};
+    const CBox logicalScreen = {0, 0, width, height};
+    auto blend = [](CBox from, CBox to, double progress) {
+        const auto box = Cascade::interpolate({from.x, from.y, from.w, from.h}, {to.x, to.y, to.w, to.h}, progress);
+        return CBox{box.x, box.y, box.w, box.h};
+    };
     const CBox content = {0, 88 * scale, screen.w, std::max(0., screen.h - 132 * scale)};
     const auto previousClip = g_pHyprRenderer->m_renderData.clipBox;
     g_pHyprRenderer->m_renderData.clipBox = screen;
@@ -181,13 +206,13 @@ void CCascadeOverview::draw() {
         data.round = round * scale;
         data.clipBox = clipped ? content : screen;
         data.blur = blur;
-        data.blurA = alpha;
+        data.blurA = phase.blur;
         g_pHyprRenderer->m_renderPass.add(makeUnique<CRectPassElement>(data));
     };
-    auto hit = [&](Kind kind, CBox box, Cascade::Id group = 0, Cascade::Id desktop = 0, PHLWINDOWREF window = {}) {
+    auto hit = [&](Kind kind, CBox box, Cascade::Id group = 0, Cascade::Id desktop = 0, PHLWINDOWREF window = {}, double opacity = 1.) {
         box.x += owner->m_position.x;
         box.y += owner->m_position.y;
-        hits.push_back({kind, box, group, desktop, window});
+        hits.push_back({kind, box, group, desktop, window, alpha * opacity});
     };
     auto glass = [&](CBox box, bool selected, bool pointed, double opacity = 1., bool clipped = true) {
         rect({box.x - 3, box.y + 4, box.w + 6, box.h + 2}, CHyprColor(.25, .30, .35, .08 * opacity), 16, clipped);
@@ -196,12 +221,12 @@ void CCascadeOverview::draw() {
         rect(box, CHyprColor(.80, .83, .86, (selected || pointed ? .45 : .35) * opacity), 13, clipped);
         rect({box.x + 14, box.y + 1, std::max(0., box.w - 28), 1}, CHyprColor(1., 1., 1., .75 * opacity), 0, clipped);
     };
-    auto button = [&](const std::string& label, Kind kind, double x, double y, double w, Cascade::Id group) {
+    auto button = [&](const std::string& label, Kind kind, double x, double y, double w, Cascade::Id group, double opacity) {
         CBox box{x, y, w, 26};
         const bool pointed = CBox{x + owner->m_position.x, y + owner->m_position.y, w, 26}.containsPoint(pointer);
-        rect(box, CHyprColor(.96, .97, .99, pointed ? .78 : .38), 8);
-        text(label, x + w / 2, y + 13, 12, pointed ? foreground : muted, 0, true);
-        hit(kind, box, group);
+        rect(box, CHyprColor(.96, .97, .99, (pointed ? .78 : .38) * opacity), 8);
+        text(label, x + w / 2, y + 13, 12, pointed ? foreground : muted, 0, true, opacity);
+        if (opacity > .05) hit(kind, box, group, 0, {}, opacity);
     };
     auto windowPreview = [&](PHLWINDOW window, CBox box, CBox clip, double opacity) {
         if (!window || !window->wlSurface() || !window->wlSurface()->resource()) return;
@@ -220,84 +245,128 @@ void CCascadeOverview::draw() {
         }, nullptr);
         cascadeWindow(window, owner, window->m_workspace, pixels, clip, Time::steadyNow(), alpha * opacity);
     };
-    auto desktopContents = [&](Cascade::Id desktop, CBox card, double opacity, bool interactive) {
+    auto desktopContents = [&](Cascade::Id desktop, CBox card, double opacity, bool interactive, double zoom = 1., double chrome = 1.) {
         const double unit = card.w / geometry.cardWidth;
-        const double visibleTop = interactive ? std::max(card.y, 90.) : card.y;
-        const double visibleBottom = interactive ? std::min(card.y + card.h, height - 44) : card.y + card.h;
+        const CBox frame = blend(logicalScreen, card, zoom);
+        const double visibleTop = std::max(frame.y, interactive && zoom == 1 ? 90. : 0.);
+        const double visibleBottom = std::min(frame.y + frame.h, interactive && zoom == 1 ? height - 44 : height);
         const auto& windows = desktopWindows[desktop];
         const auto group = model.group(model.groupFor(desktop));
         const auto index = group ? std::find(group->desktops.begin(), group->desktops.end(), desktop) - group->desktops.begin() + 1 : 1;
-        if (card.y >= (interactive ? 90 : 0))
-            text("Escritorio " + std::to_string(index) + "  ·  " + std::to_string(windows.size()), card.x + 14 * unit, card.y + 10 * unit,
-                 12, foreground, geometry.cardWidth - 28, false, opacity, unit);
-        const CBox clip = {std::max(0., card.x + 7 * unit) * scale, std::max(visibleTop, card.y + 36 * unit) * scale,
-            std::max(0., std::min(width, card.x + card.w - 7 * unit) - std::max(0., card.x + 7 * unit)) * scale,
-            std::max(0., visibleBottom - 7 * unit - std::max(visibleTop, card.y + 36 * unit)) * scale};
+        if (frame.y >= (interactive && zoom == 1 ? 90 : 0))
+            text("Escritorio " + std::to_string(index) + "  ·  " + std::to_string(windows.size()), frame.x + 14 * unit, frame.y + 10 * unit,
+                 12, foreground, geometry.cardWidth - 28, false, opacity * chrome, unit);
+        auto area = blend(logicalScreen, {card.x + 7 * unit, card.y + 36 * unit, card.w - 14 * unit, card.h - 43 * unit}, zoom);
+        const double left = std::max(0., area.x), top = std::max(visibleTop, area.y);
+        const CBox clip = {left * scale, top * scale, std::max(0., std::min(width, area.x + area.w) - left) * scale,
+                          std::max(0., std::min(visibleBottom, area.y + area.h) - top) * scale};
         const int count = windows.size();
         const int cols = std::max(1, int(std::ceil(std::sqrt(count))));
         const int rows = std::max(1, int(std::ceil(double(count) / cols)));
         const double cellW = (card.w - 24 * unit) / cols, cellH = (card.h - 52 * unit) / rows;
-        for (int i = 0; i < count; ++i) {
+        std::vector<int> order;
+        for (int i = 0; i < count; ++i) order.push_back(i);
+        if (zoom < 1) {
+            auto layer = [&](int i) {
+                const auto& window = windows[i];
+                if (window->m_pinned) return 4;
+                if (Fullscreen::controller()->isFullscreen(window)) return 2;
+                if (window->m_isFloating && window->isAllowedOverFullscreen()) return 3;
+                return window->m_isFloating ? 1 : 0;
+            };
+            std::stable_sort(order.begin(), order.end(), [&](int a, int b) { return layer(a) < layer(b); });
+        }
+        for (const int i : order) {
             const auto& window = windows[i];
             const auto size = window->size(Desktop::View::IGeometric::GEOMETRIC_CURRENT);
+            // Workspace slides are replaced by the card zoom; pinned windows never inherit them.
+            const auto position = window->position(Desktop::View::IGeometric::GEOMETRIC_CURRENT) + window->m_floatingOffset - owner->m_position;
+            const CBox native{position.x, position.y, std::max(5., size.x), std::max(5., size.y)};
             const double cellX = card.x + 12 * unit + (i % cols) * cellW, cellY = card.y + 38 * unit + (i / cols) * cellH;
             const auto fitted = Cascade::fit(cellX + 3 * unit, cellY + 3 * unit, cellW - 6 * unit, std::max(8., cellH - 24 * unit), size.x, size.y);
-            const CBox box{fitted.x, fitted.y, fitted.w, fitted.h};
+            const CBox box = blend(native, {fitted.x, fitted.y, fitted.w, fitted.h}, zoom);
             const auto global = CBox{box.x + owner->m_position.x, box.y + owner->m_position.y, box.w, box.h};
             if (interactive && (global.containsPoint(pointer) || keyboardWindow.lock() == window))
-                rect({box.x - 2, box.y - 2, box.w + 4, box.h + 4}, silver, 5);
+                rect({box.x - 2, box.y - 2, box.w + 4, box.h + 4}, CHyprColor(silver.r, silver.g, silver.b, opacity * chrome), 5);
             double windowOpacity = opacity;
+            if (zoom < 1 && window->isBlockedByFullscreen())
+                windowOpacity *= zoom;
             if (interactive && dragPreview && dragPreview->source.kind == Kind::Window && dragPreview->source.window.lock() == window)
                 windowOpacity *= dragPreview->settling ? dragPreview->progress.value : .35;
             windowPreview(window, box, clip, windowOpacity);
-            const double hitTop = std::max(box.y, visibleTop), hitBottom = std::min(box.y + box.h, visibleBottom);
-            if (interactive && hitBottom > hitTop && clip.w > 0 && clip.h > 0) hit(Kind::Window, {box.x, hitTop, box.w, hitBottom - hitTop}, group->id, desktop, window);
-            if (cellY + cellH - 20 * unit >= visibleTop && cellY + cellH < visibleBottom)
-                text(window->m_title.empty() ? window->m_class : window->m_title, cellX + 4 * unit, cellY + cellH - 19 * unit, 10, muted, cellW / unit - 8, false, opacity, unit);
+            const double hitTop = std::max(box.y, top), hitBottom = std::min(box.y + box.h, (clip.y + clip.h) / scale);
+            const double hitLeft = std::max(box.x, left), hitRight = std::min(box.x + box.w, (clip.x + clip.w) / scale);
+            if (interactive && hitBottom > hitTop && hitRight > hitLeft)
+                hit(Kind::Window, {hitLeft, hitTop, hitRight - hitLeft, hitBottom - hitTop}, group->id, desktop, window, windowOpacity);
+            const double captionX = native.x + 4 * unit + (cellX - native.x) * zoom;
+            const double captionY = native.y + native.h + 6 * unit + (cellY + cellH - 19 * unit - native.y - native.h - 6 * unit) * zoom;
+            if (captionY >= visibleTop && captionY + 18 * unit < visibleBottom)
+                text(window->m_title.empty() ? window->m_class : window->m_title, captionX, captionY, 10, muted, cellW / unit - 8, false, opacity * chrome, unit);
         }
-        if (windows.empty()) text("Espacio para empezar", card.x + 20 * unit, std::max(visibleTop + 4, card.y + card.h / 2), 14, muted, geometry.cardWidth - 40, false, opacity, unit);
+        if (windows.empty()) text("Espacio para empezar", frame.x + 20 * unit, std::max(visibleTop + 4, frame.y + frame.h / 2), 14, muted, geometry.cardWidth - 40, false, opacity * chrome, unit);
+    };
+    auto drawDesktop = [&](Cascade::Id desktop, CBox card) {
+        const auto& group = *model.group(model.groupFor(desktop));
+        const auto cardPhase = Cascade::overviewPhase(cards[desktop].zoom.value);
+        const double zoom = cardPhase.zoom, chrome = cardPhase.chrome;
+        const CBox frame = blend(logicalScreen, card, zoom);
+        const double top = std::max(frame.y, zoom == 1 ? 90. : 0.), bottom = std::min(frame.y + frame.h, zoom == 1 ? height - 44 : height);
+        if (frame.x + frame.w < 0 || frame.x > width || bottom <= top) return;
+        double opacity = std::clamp(cards[desktop].appearance.value, 0., 1.);
+        if (opacity == 0) return;
+        if (dragPreview && dragPreview->source.kind == Kind::Desktop && dragPreview->source.desktop == desktop)
+            opacity *= dragPreview->settling ? .5 + .5 * dragPreview->progress.value : .5;
+        const bool selected = group.id == model.activeGroup && desktop == group.selected;
+        const bool pointed = hover && hover->desktop == desktop && (dragging || hover->kind == Kind::Desktop);
+        glass(frame, selected, pointed, opacity * zoom, zoom == 1);
+        hit(Kind::Desktop, {frame.x, top, frame.w, bottom - top}, group.id, desktop, {}, opacity);
+        desktopContents(desktop, card, opacity, true, zoom, chrome);
+        if (selected && hasStatus && zoom == 1 && bottom - top >= 24) {
+            rect({card.x + 14, bottom - 21, 3, 14}, CHyprColor(warning.r, warning.g, warning.b, opacity), 1);
+            text(statusText, card.x + 22, bottom - 21, 12, foreground, geometry.cardWidth - 36, false, opacity);
+        }
     };
 
     // One native blur without a color veil; light fills stay inside the cards.
-    rect({0, 0, width, height}, CHyprColor(0., 0., 0., 0.), 0, false, true);
+    rect(logicalScreen, CHyprColor(0., 0., 0., 0.), 0, false, true);
+    std::vector<std::pair<Cascade::Id, CBox>> zoomingCards;
+    const auto heroPhase = Cascade::overviewPhase(cards.contains(transitionDesktop) ? cards.at(transitionDesktop).zoom.value : alpha);
     for (size_t groupIndex = 0; groupIndex <= model.groups.size(); ++groupIndex) {
         const double groupY = groupIndex < model.groups.size() ? groupRows[model.groups[groupIndex].id].value : double(groupIndex);
-        const double y = geometry.centerY + (groupY - row.value) * geometry.pitchY - geometry.cardHeight / 2 + (1 - alpha) * 24;
+        const double y = geometry.centerY + (groupY - row.value) * geometry.pitchY - geometry.cardHeight / 2;
         if (groupIndex == model.groups.size()) {
             if (y + geometry.cardHeight < 90 || y > height - 44) continue;
+            const double opacity = phase.chrome;
             const double x = (width - geometry.cardWidth) / 2;
-            glass({x, y, geometry.cardWidth, geometry.cardHeight}, false, hover && hover->kind == Kind::NewGroup);
-            text("+", width / 2, std::clamp(y + geometry.cardHeight / 2, 108., height - 62), 24, muted, 0, true);
-            hit(Kind::NewGroup, {x, std::max(y, 90.), geometry.cardWidth, std::min(geometry.cardHeight, height - 46 - std::max(y, 90.))});
+            glass({x, y, geometry.cardWidth, geometry.cardHeight}, false, hover && hover->kind == Kind::NewGroup, opacity);
+            text("+", width / 2, std::clamp(y + geometry.cardHeight / 2, 108., height - 62), 24, muted, 0, true, opacity);
+            if (opacity > .05) hit(Kind::NewGroup, {x, std::max(y, 90.), geometry.cardWidth, std::min(geometry.cardHeight, height - 46 - std::max(y, 90.))}, 0, 0, {}, opacity);
             continue;
         }
         const auto& group = model.groups[groupIndex];
-        if (y + geometry.cardHeight >= 90 && y - 36 <= height - 44) {
-            const double titleY = std::clamp(y - 34, 94., height - 72), controlsX = (width - 102) / 2;
-            button("↑", Kind::GroupUp, controlsX, titleY - 2, 30, group.id);
-            button("↓", Kind::GroupDown, controlsX + 36, titleY - 2, 30, group.id);
-            button("×", Kind::RemoveGroup, controlsX + 72, titleY - 2, 30, group.id);
-        }
+        double groupOpacity = 0;
+        CBox controlFrame{(width - geometry.cardWidth) / 2, y, geometry.cardWidth, geometry.cardHeight};
         for (const auto desktop : group.desktops) {
             const auto& position = cards[desktop];
             const double x = width / 2 - geometry.cardWidth / 2 + (position.x.value - columns[group.id].value) * geometry.pitchX;
-            const double cardY = geometry.centerY + (position.y.value - row.value) * geometry.pitchY - geometry.cardHeight / 2 + (1 - alpha) * 24;
-            if (x + geometry.cardWidth < 0 || x > width || cardY + geometry.cardHeight < 90 || cardY > height - 44) continue;
-            const bool selected = group.id == model.activeGroup && desktop == group.selected;
-            const bool pointed = hover && hover->desktop == desktop && (dragging || hover->kind == Kind::Desktop);
-            const double opacity = dragPreview && dragPreview->source.kind == Kind::Desktop && dragPreview->source.desktop == desktop
-                ? (dragPreview->settling ? .5 + .5 * dragPreview->progress.value : .5) : 1.;
+            const double cardY = geometry.centerY + (position.y.value - row.value) * geometry.pitchY - geometry.cardHeight / 2;
             const CBox card{x, cardY, geometry.cardWidth, geometry.cardHeight};
-            glass(card, selected, pointed, opacity);
-            const double visibleTop = std::max(cardY, 90.), visibleBottom = std::min(cardY + geometry.cardHeight, height - 44);
-            hit(Kind::Desktop, {x, visibleTop, geometry.cardWidth, visibleBottom - visibleTop}, group.id, desktop);
-            desktopContents(desktop, card, opacity, true);
-            if (selected && hasStatus && visibleBottom - visibleTop >= 24) {
-                rect({x + 14, visibleBottom - 21, 3, 14}, warning, 1);
-                text(statusText, x + 22, visibleBottom - 21, 12, foreground, geometry.cardWidth - 36);
-            }
+            groupOpacity = std::max(groupOpacity, std::clamp(position.appearance.value, 0., 1.));
+            const double zoom = Cascade::overviewPhase(position.zoom.value).zoom;
+            if (desktop == transitionDesktop && zoom < 1) controlFrame = blend(logicalScreen, card, zoom);
+            if (zoom < 1) zoomingCards.emplace_back(desktop, card);
+            else drawDesktop(desktop, card);
+        }
+        if (group.id == originGroup) groupOpacity *= heroPhase.chrome;
+        if (controlFrame.y + controlFrame.h >= 90 && controlFrame.y - 36 <= height - 44) {
+            const double titleY = std::clamp(controlFrame.y - 34, 94., height - 72), controlsX = controlFrame.x + (controlFrame.w - 102) / 2;
+            button("↑", Kind::GroupUp, controlsX, titleY - 2, 30, group.id, groupOpacity);
+            button("↓", Kind::GroupDown, controlsX + 36, titleY - 2, 30, group.id, groupOpacity);
+            button("×", Kind::RemoveGroup, controlsX + 72, titleY - 2, 30, group.id, groupOpacity);
         }
     }
+    std::stable_sort(zoomingCards.begin(), zoomingCards.end(), [&](const auto& a, const auto& b) { return a.first != transitionDesktop && b.first == transitionDesktop; });
+    for (const auto& [desktop, card] : zoomingCards) drawDesktop(desktop, card);
     if (dragPreview) {
         auto& preview = *dragPreview;
         const auto window = preview.source.window.lock();
@@ -330,7 +399,8 @@ void CCascadeOverview::draw() {
     bool moving = reveal.value != reveal.target || ((!swiping || swipeFingers != 3 || swipeAxis != 2) && row.value != row.target) || (dragPreview && dragPreview->settling) || hasStatus;
     for (const auto& [id, column] : columns)
         if (!swiping || swipeFingers != 3 || swipeAxis != 1 || id != model.activeGroup) moving |= column.value != column.target;
-    for (const auto& [id, card] : cards) moving |= card.x.value != card.x.target || card.y.value != card.y.target;
+    for (const auto& [id, card] : cards) moving |= card.x.value != card.x.target || card.y.value != card.y.target || card.appearance.value != card.appearance.target || card.zoom.value != card.zoom.target;
+    moving |= active && animate && entryAge < Cascade::staggerDelay(3);
     for (const auto& [id, group] : groupRows) moving |= group.value != group.target;
     const auto local = pointer - owner->m_position;
     moving |= dragging && (local.x < 48 || local.x > width - 48 || local.y < 120 || local.y > height - 72);

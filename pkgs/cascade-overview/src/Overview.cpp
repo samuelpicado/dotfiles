@@ -125,7 +125,7 @@ void CCascadeOverview::targets(bool warp) {
     bool moving = reveal.value != reveal.target || row.value != row.target;
     for (const auto& [id, column] : columns) moving |= column.value != column.target;
     for (const auto& [id, group] : groupRows) moving |= group.value != group.target;
-    for (const auto& [id, card] : cards) moving |= card.x.value != card.x.target || card.y.value != card.y.target;
+    for (const auto& [id, card] : cards) moving |= card.x.value != card.x.target || card.y.value != card.y.target || card.appearance.value != card.appearance.target || card.zoom.value != card.zoom.target;
     if (!moving) lastFrame = std::chrono::steady_clock::now();
     cascadeRefreshEmptyDesktops();
     for (size_t i = 0; i < model.groups.size(); ++i) {
@@ -144,6 +144,7 @@ void CCascadeOverview::targets(bool warp) {
             auto [it, added] = cards.try_emplace(group.desktops[x]);
             auto& card = it->second;
             if (added) card = {{double(x), double(x)}, {double(y), double(y)}, group.id};
+            if (added && active && reveal.value == 1) card.appearance = {1, 1};
             if (card.group != group.id) card.x.value += columns[group.id].value - columns[card.group].value;
             card.group = group.id;
             card.x.target = x;
@@ -188,7 +189,17 @@ void CCascadeOverview::show() {
     if (active) return;
     cancelDesktopSwipe();
     sync();
-    if (const auto owner = getOwner(); owner && !compositionLocked) {
+    const auto owner = getOwner();
+    // Special workspaces have no card to zoom into.
+    transitionDesktop = owner && owner->m_activeWorkspace && !owner->m_activeSpecialWorkspace ? owner->m_activeWorkspace->m_id : 0;
+    if (reveal.value == 0) {
+        entryStartedAt = std::chrono::steady_clock::now();
+        for (auto& [id, card] : cards) {
+            card.appearance = id == transitionDesktop ? Cascade::Motion{1, 1} : Cascade::Motion{};
+            card.zoom = id == transitionDesktop ? Cascade::Motion{0, 1} : Cascade::Motion{1, 1};
+        }
+    }
+    if (owner && !compositionLocked) {
         // A counted software-cursor lock prevents direct scanout from bypassing the overlay.
         Pointer::mgr()->lockSoftwareForMonitor(owner);
         compositionLocked = true;
@@ -215,6 +226,20 @@ void CCascadeOverview::beforeRender() {
         // The scheduler checked scanout before these frame-batched offsets changed.
         if (const auto owner = getOwner()) owner->recheckSolitary();
     }
+    if ((active || reveal.value > 0) && !desktopSwipeSource) {
+        const auto owner = getOwner();
+        const auto native = owner && !owner->m_activeSpecialWorkspace ? owner->m_activeWorkspace : PHLWORKSPACE{};
+        const auto desktop = native ? native->m_id : 0;
+        if (desktop != transitionDesktop) {
+            // External workspace changes must hand off the zoom before the next frame.
+            if (native) {
+                const auto previous = State::workspaceState()->query().id(transitionDesktop).run();
+                if (previous) Animation::Workspace::startAnimation(previous, Animation::Workspace::ANIMATION_TYPE_OUT, true, true);
+                Animation::Workspace::startAnimation(native, Animation::Workspace::ANIMATION_TYPE_IN, true, true);
+            }
+            transitionDesktop = desktop;
+        }
+    }
     if (!active && reveal.value == 0) {
         previewListeners.clear();
         releaseComposition();
@@ -223,11 +248,14 @@ void CCascadeOverview::beforeRender() {
 
 void CCascadeOverview::hide(bool immediate) {
     if (immediate) cancelDesktopSwipe();
+    const auto owner = getOwner();
+    transitionDesktop = owner && owner->m_activeWorkspace && !owner->m_activeSpecialWorkspace ? owner->m_activeWorkspace->m_id : 0;
     active = false;
     lastFrame = std::chrono::steady_clock::now();
     reveal.target = 0;
     if (immediate || !config.animate->value()) {
-        reveal.value = 0;
+        reveal = {};
+        for (auto& [id, card] : cards) { card.appearance = {}; card.zoom = {1, 1}; }
         releaseComposition();
     }
     dragging = false;
@@ -264,13 +292,14 @@ void CCascadeOverview::focus(Id desktop, bool close) {
         forward = std::find(desktops.begin(), desktops.end(), desktop) > std::find(desktops.begin(), desktops.end(), previous->m_id);
     }
     model.select(desktop);
+    const bool instant = !config.animate->value() || active || reveal.value > 0;
     const bool background = owner != Desktop::focusState()->monitor();
     owner->changeWorkspace(ws, false, background, background);
     if (previous && previous != ws) {
         // Workspace IDs stay stable when cards move; animation follows their visual order.
         const std::string style = vertical ? "slidevert" : "slide";
-        Animation::Workspace::startAnimation(previous, Animation::Workspace::ANIMATION_TYPE_OUT, forward, !config.animate->value(), style);
-        Animation::Workspace::startAnimation(ws, Animation::Workspace::ANIMATION_TYPE_IN, forward, !config.animate->value(), style);
+        Animation::Workspace::startAnimation(previous, Animation::Workspace::ANIMATION_TYPE_OUT, forward, instant, style);
+        Animation::Workspace::startAnimation(ws, Animation::Workspace::ANIMATION_TYPE_IN, forward, instant, style);
     }
     targets();
     save();
@@ -356,6 +385,7 @@ bool CCascadeOverview::command(const std::string& line, std::string& error) {
 
 std::string CCascadeOverview::inspect() {
     std::ostringstream out;
+    const auto phase = Cascade::overviewPhase(cards.contains(transitionDesktop) ? cards.at(transitionDesktop).zoom.value : reveal.value);
     out << "{\"active\":" << (active ? "true" : "false") << ",\"reveal\":" << reveal.value << ",\"dragging\":" << (dragging ? "true" : "false") << ",\"settling\":" << (dragPreview && dragPreview->settling ? "true" : "false") << ",\"monitor\":" << ownerID << ",\"activeGroup\":" << model.activeGroup << ",\"selected\":" << model.current().selected << ",\"renaming\":false,\"status\":" << json(std::chrono::steady_clock::now() < statusUntil ? statusText : "") << ",\"statePath\":" << json(statePath.string()) << ",\"groups\":[";
     for (size_t i = 0; i < model.groups.size(); ++i) {
         if (i) out << ',';
@@ -364,7 +394,7 @@ std::string CCascadeOverview::inspect() {
         for (size_t j = 0; j < group.desktops.size(); ++j) { if (j) out << ','; out << group.desktops[j]; }
         out << "]}";
     }
-    out << "],\"preview\":";
+    out << "],\"zoom\":" << phase.zoom << ",\"blur\":" << Cascade::overviewPhase(reveal.value).blur << ",\"chrome\":" << phase.chrome << ",\"transitionDesktop\":" << transitionDesktop << ",\"preview\":";
     if (dragPreview) {
         const auto owner = getOwner();
         const auto origin = owner ? owner->m_position : Vector2D{};
@@ -375,7 +405,7 @@ std::string CCascadeOverview::inspect() {
     for (size_t i = 0; i < hits.size(); ++i) {
         if (i) out << ',';
         const auto& hit = hits[i];
-        out << "{\"kind\":" << int(hit.kind) << ",\"group\":" << hit.group << ",\"desktop\":" << hit.desktop << ",\"x\":" << hit.box.x << ",\"y\":" << hit.box.y << ",\"w\":" << hit.box.w << ",\"h\":" << hit.box.h;
+        out << "{\"kind\":" << int(hit.kind) << ",\"group\":" << hit.group << ",\"desktop\":" << hit.desktop << ",\"x\":" << hit.box.x << ",\"y\":" << hit.box.y << ",\"w\":" << hit.box.w << ",\"h\":" << hit.box.h << ",\"opacity\":" << hit.opacity;
         if (const auto window = hit.window.lock()) {
             std::ostringstream address;
             address << "0x" << std::hex << reinterpret_cast<uintptr_t>(window.get());

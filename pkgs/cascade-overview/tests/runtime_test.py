@@ -64,13 +64,13 @@ class CascadeRuntime(unittest.TestCase):
         subprocess.run([WTYPE, *arguments], env=self.env, check=True, timeout=6)
         time.sleep(.12)
 
-    def wait(self, predicate):
+    def wait(self, predicate, interval=.05):
         deadline = time.monotonic() + 4
         while time.monotonic() < deadline:
             result = predicate()
             if result:
                 return result
-            time.sleep(.05)
+            time.sleep(interval)
         self.fail('Runtime condition did not become true')
 
     def fresh(self):
@@ -559,6 +559,8 @@ class CascadeRuntime(unittest.TestCase):
         self.api('close', 'all')
         self.hc('dispatch', f'hl.dsp.focus({{monitor={json.dumps(MONITOR)}}})')
         self.fresh()
+        self.foot()
+        self.hc('dispatch', 'hl.dsp.window.fullscreen({action="toggle"})')
         self.eval('hl.config({cursor={invisible=true},render={direct_scanout=true},plugin={cascade={animate=false}}})')
         self.addCleanup(lambda: self.eval('hl.config({cursor={invisible=false},render={direct_scanout=false}})'))
         original = next(m for m in json.loads(self.hc('monitors', '-j')) if m['name'] == MONITOR)
@@ -1243,6 +1245,7 @@ end''')
         self.fresh()
         self.foot("while :; do printf '\\033[48;2;0;0;220m\\033[2J'; sleep .7; printf '\\033[48;2;220;0;0m\\033[2J'; sleep .7; done")
         self.api('open')
+        self.wait(lambda: self.state()['zoom'] == 1 and self.state()['reveal'] == 1)
         card = self.hit(0, desktop=self.state()['selected'])
         logical_width, logical_height = self.dimensions()
         samples = []
@@ -1423,6 +1426,159 @@ end''')
         self.eval('_G.cascadeQaIdleFrames = hl.plugin.cascade_test.frames()')
         time.sleep(.45)
         self.eval('local frames = hl.plugin.cascade_test.frames() - _G.cascadeQaIdleFrames; assert(frames <= 2, "Idle overview rendered " .. frames .. " frames instead of sleeping")')
+
+    def test_62_desktop_and_window_zoom_from_real_geometry(self):
+        self.eval(f'hl.config({{plugin={{cascade={{animate=false}}}}}}); hl.monitor({{output="{MONITOR}",mode="1280x800@60",position="1600x200",scale=1.25}})')
+        self.addCleanup(lambda: self.eval(f'hl.monitor({{output="{MONITOR}",mode="1280x800@60",position="0x0",scale=1}})'))
+        desktop = self.fresh()
+        window = self.foot()
+        self.api('open')
+        final_card = self.hit(0, desktop=desktop)
+        final_window = self.hit(1, window=window['address'])
+        self.api('close')
+        self.eval('hl.config({plugin={cascade={animate=true}}})')
+        self.addCleanup(lambda: self.eval('hl.config({plugin={cascade={animate=false}}})'))
+        self.eval('assert(hl.plugin.cascade.open(""))')
+        def during_zoom():
+            state = self.state()
+            return state if .005 < state.get('zoom', 0) < .95 else None
+        state = self.wait(during_zoom, interval=.005)
+        card = next(hit for hit in state['hits'] if hit['kind'] == 0 and hit['desktop'] == desktop)
+        preview = next(hit for hit in state['hits'] if hit['kind'] == 1 and hit.get('window') == window['address'])
+        self.assertEqual(state['transitionDesktop'], desktop)
+        self.assertGreater(card['w'], final_card['w'] + 20)
+        self.assertLess(card['w'], self.dimensions()[0])
+        self.assertGreater(preview['w'], final_window['w'] + 20)
+        self.assertGreater(state['blur'], state['zoom'])
+        self.frame('desktop-zoom-entry')
+        self.wait(lambda: self.state()['reveal'] == 1)
+        self.assertAlmostEqual(self.hit(0, desktop=desktop)['w'], final_card['w'], delta=1)
+
+    def test_63_neighbor_entry_is_staggered_outward(self):
+        self.eval('hl.config({plugin={cascade={animate=false}}})')
+        self.fresh()
+        desktops = []
+        for ordinal in range(1, 6):
+            self.command('desktop-select ' + str(ordinal))
+            desktops.append(self.state()['selected'])
+            self.foot()
+        self.command('desktop-select 3')
+        self.eval('hl.config({plugin={cascade={animate=true,cardWidth=280}}})')
+        self.addCleanup(lambda: self.eval('hl.config({plugin={cascade={animate=false,cardWidth=480}}})'))
+        self.eval('assert(hl.plugin.cascade.open(""))')
+        time.sleep(.055)
+        state = self.state()
+        alphas = {hit['desktop']: hit.get('opacity', state['reveal']) for hit in state['hits'] if hit['kind'] == 0}
+        self.assertGreater(alphas.get(desktops[1], 0), alphas.get(desktops[0], 0) + .005,
+                           'The nearest neighbor must appear before the more distant card')
+        self.frame('neighbors-staggered')
+        self.wait(lambda: self.state()['reveal'] == 1)
+        self.wait(lambda: all(hit.get('opacity', 0) == 1 for hit in self.state()['hits'] if hit['kind'] == 0))
+
+    def test_64_selected_exit_zooms_without_a_native_workspace_slide(self):
+        self.eval('hl.config({plugin={cascade={animate=false}}})')
+        self.fresh()
+        self.foot()
+        self.command('desktop-select 2')
+        destination = self.state()['selected']
+        window = self.foot()
+        self.command('desktop-select 1')
+        self.api('open')
+        final_window = self.hit(1, window=window['address'])
+        driver = os.environ['CASCADE_QA_GESTURE_DRIVER']
+        self.hc('plugin', 'load', driver)
+        self.addCleanup(lambda: self.hc('plugin', 'unload', driver))
+        self.eval('hl.config({animations={enabled=true},plugin={cascade={animate=true}}}); hl.animation({leaf="workspaces",enabled=true,speed=10,bezier="default",style="slide"})')
+        self.addCleanup(lambda: self.eval('hl.config({animations={enabled=false},plugin={cascade={animate=false}}})'))
+        self.click(self.hit(0, desktop=destination))
+        def during_exit():
+            state = self.state()
+            return state if 0 < state['zoom'] < 1 else None
+        state = self.wait(during_exit, interval=.005)
+        self.eval(f'local w=hl.plugin.cascade_test.workspace({destination}); assert(w.x == 0 and w.goalX == 0, "Overview zoom must replace the native workspace slide")')
+        self.assertFalse(state['active'])
+        self.assertEqual(state['transitionDesktop'], destination)
+        preview = next(hit for hit in state['hits'] if hit['kind'] == 1 and hit.get('window') == window['address'])
+        self.assertGreater(preview['w'], final_window['w'])
+        self.frame('desktop-zoom-exit')
+        self.wait(lambda: self.state()['reveal'] == 0)
+        self.assertEqual(json.loads(self.hc('activeworkspace', '-j'))['id'], destination)
+
+    def test_65_early_selected_exit_keeps_both_cards_continuous(self):
+        self.eval('hl.config({plugin={cascade={animate=false}}})')
+        source = self.fresh()
+        self.foot()
+        self.command('desktop-select 2')
+        destination = self.state()['selected']
+        self.foot()
+        self.command('desktop-select 1')
+        self.api('open')
+        final_width = self.hit(0, desktop=source)['w']
+        self.api('close')
+        self.eval('hl.config({plugin={cascade={animate=true}}}); assert(hl.plugin.cascade.open(""))')
+        self.addCleanup(lambda: self.eval('hl.config({plugin={cascade={animate=false}}})'))
+        self.wait(lambda: .005 < self.state()['zoom'] < .9, interval=.005)
+        self.eval(f'assert(hl.plugin.cascade.command("desktop-select 2")); hl.dispatch(hl.dsp.focus({{workspace={destination}}})); assert(hl.plugin.cascade.close(""))')
+        def after_handoff():
+            state = self.state()
+            return state if not state['active'] and state['zoom'] < 1 else None
+        state = self.wait(after_handoff, interval=.005)
+        self.assertEqual(state['transitionDesktop'], destination)
+        widths = {hit['desktop']: hit['w'] for hit in state['hits'] if hit['kind'] == 0}
+        self.assertGreater(widths[source], final_width, 'The original desktop must finish shrinking from its current frame')
+        self.assertLess(widths[destination], self.dimensions()[0] - 100, 'The selected card must expand from its own current frame')
+        self.wait(lambda: self.state()['reveal'] == 0)
+
+    def test_66_closing_retargets_native_workspace_changes(self):
+        self.eval('hl.config({plugin={cascade={animate=false}}})')
+        source = self.fresh()
+        self.foot()
+        self.command('desktop-select 2')
+        destination = self.state()['selected']
+        self.foot()
+        self.command('desktop-select 1')
+        driver = os.environ['CASCADE_QA_GESTURE_DRIVER']
+        self.hc('plugin', 'load', driver)
+        self.addCleanup(lambda: self.hc('plugin', 'unload', driver))
+        self.eval('hl.config({animations={enabled=true},plugin={cascade={animate=true}}}); hl.animation({leaf="workspaces",enabled=true,speed=10,bezier="default",style="slide"})')
+        self.addCleanup(lambda: self.eval('hl.config({animations={enabled=false},plugin={cascade={animate=false}}})'))
+        for native in (False, True):
+            self.api('open')
+            self.wait(lambda: self.state()['reveal'] == 1)
+            action = f'hl.dispatch(hl.dsp.focus({{workspace={destination}}}))' if native else 'assert(hl.plugin.cascade.command("desktop-select 2"))'
+            self.eval('assert(hl.plugin.cascade.close("")); ' + action)
+            self.wait(lambda: self.state()['transitionDesktop'] == destination)
+            self.eval(f'local w=hl.plugin.cascade_test.workspace({destination}); assert(w.x == 0 and w.goalX == 0, "Closing zoom must suppress the native workspace slide")')
+            self.wait(lambda: self.state()['reveal'] == 0)
+            self.hc('dispatch', f'hl.dsp.focus({{workspace={source}}})')
+            time.sleep(.3)
+
+    def test_67_zoom_preserves_floating_and_fullscreen_stacking(self):
+        self.eval('hl.config({plugin={cascade={animate=false}}})')
+        self.fresh()
+        floating = self.foot()
+        self.hc('dispatch', 'hl.dsp.window.float({action="toggle"})')
+        tiled = self.foot()
+        self.assertTrue(self.client(floating['address'])['floating'])
+        self.eval('hl.config({plugin={cascade={animate=true}}})')
+        self.addCleanup(lambda: self.eval('hl.config({plugin={cascade={animate=false}}})'))
+        def during_morph():
+            state = self.state()
+            return state if 0 < state['zoom'] < 1 else None
+        for fullscreen in (False, True):
+            if fullscreen:
+                self.hc('dispatch', 'hl.dsp.window.fullscreen({action="toggle"})')
+            self.eval('assert(hl.plugin.cascade.open(""))')
+            state = self.wait(during_morph, interval=.005)
+            windows = [hit for hit in state['hits'] if hit['kind'] == 1]
+            top = tiled if fullscreen else floating
+            self.assertEqual(windows[-1]['window'], top['address'], 'The morph must retain native window stacking')
+            if fullscreen:
+                hidden = next(hit for hit in windows if hit['window'] == floating['address'])
+                self.assertLess(hidden['opacity'], windows[-1]['opacity'], 'Clients covered by fullscreen must fade in from hidden')
+            self.wait(lambda: self.state()['reveal'] == 1)
+            self.api('close')
+            self.wait(lambda: self.state()['reveal'] == 0)
 
 
 if __name__ == '__main__':
